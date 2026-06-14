@@ -1,0 +1,40 @@
+run_action:
+  fields:
+    action_type:
+      required: true
+      example: obs_scene_set
+      selector:
+        text:
+    target:
+      example: Home OBS
+      selector:
+        text:
+    value:
+      example: Gaming
+      selector:
+        text:
+    action_params:
+      example: '{"remember": true}'
+      selector:
+        object:
+
+obs_scene_set:
+  fields:
+    target:
+      required: true
+      example: Home OBS
+      selector:
+        text:
+    scene:
+      required: true
+      example: Gaming
+      selector:
+        text:
+
+overlay_alert:
+  fields:
+    text:
+      required: true
+      example: Be right back!
+      selector:
+        text:

@@ -1,0 +1,18 @@
+# Single source of truth for the toolchain (local + CI). Run `mise install` to provision.
+# This is a Home Assistant custom integration (Python); HA itself is a pip package, not a mise
+# tool — install it into a venv (`uv venv && uv pip install homeassistant`) to run hassfest/tests.
+[tools]
+# Match Home Assistant's supported runtime (HA 2024.4+ → 3.12/3.13; pin the newer line).
+python = "3.13"
+# Linter/formatter HA uses; `mise run lint`.
+ruff = "latest"
+# Fast venv + installer for pulling in homeassistant locally.
+uv = "latest"
+
+[tasks.lint]
+description = "Lint the integration with ruff"
+run = "ruff check custom_components"
+
+[tasks.format]
+description = "Format with ruff"
+run = "ruff format custom_components"

@@ -1,0 +1,77 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Switchboard",
+        "description": "Enter your Switchboard host and the External API token (Switchboard → Settings → External API).",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "token": "API token",
+          "verify_ssl": "Verify TLS certificate",
+          "fingerprint": "TLS fingerprint (SHA-256)"
+        },
+        "data_description": {
+          "verify_ssl": "Leave off for Switchboard's self-signed certificate unless you front it with a trusted certificate.",
+          "fingerprint": "Optional. Pin the self-signed certificate by its SHA-256 fingerprint (shown on the Peers tab) — recommended over disabling verification."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect. Check the host, port, and that the External API is enabled.",
+      "invalid_auth": "Invalid API token.",
+      "bad_fingerprint": "The TLS fingerprint is not valid hex."
+    },
+    "abort": {
+      "already_configured": "This Switchboard instance is already configured."
+    }
+  },
+  "services": {
+    "run_action": {
+      "name": "Run action",
+      "description": "Run any Switchboard rule action through /api/command.",
+      "fields": {
+        "action_type": {
+          "name": "Action type",
+          "description": "The action to run, e.g. obs_scene_set, obs_delay_set, twitch_category_set, spotify_playback_start."
+        },
+        "target": {
+          "name": "Target",
+          "description": "Connection label or id (or a sentinel like \"spotify\"). Leave blank for actions with no target."
+        },
+        "value": {
+          "name": "Value",
+          "description": "The action value, e.g. a scene name or delay in seconds."
+        },
+        "action_params": {
+          "name": "Action params",
+          "description": "Optional JSON object, e.g. {\"remember\": true}."
+        }
+      }
+    },
+    "obs_scene_set": {
+      "name": "Set OBS scene",
+      "description": "Switch the program scene of an OBS connection.",
+      "fields": {
+        "target": {
+          "name": "OBS connection",
+          "description": "OBS connection label or id."
+        },
+        "scene": {
+          "name": "Scene",
+          "description": "Name of the scene to switch to."
+        }
+      }
+    },
+    "overlay_alert": {
+      "name": "Show overlay alert",
+      "description": "Show an alert on the Switchboard alerts overlay.",
+      "fields": {
+        "text": {
+          "name": "Text",
+          "description": "The alert text to display."
+        }
+      }
+    }
+  }
+}
