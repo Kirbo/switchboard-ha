@@ -45,7 +45,7 @@
         },
         "action_params": {
           "name": "Action params",
-          "description": "Optional JSON object, e.g. {\"remember\": true}."
+          "description": "Optional extra action parameters as a JSON object, e.g. remember set to true."
         }
       }
     },
