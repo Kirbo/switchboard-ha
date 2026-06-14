@@ -38,3 +38,14 @@ overlay_alert:
       example: Be right back!
       selector:
         text:
+
+set_machine_state:
+  fields:
+    state:
+      required: true
+      example: afk
+      selector:
+        select:
+          options:
+            - afk
+            - active

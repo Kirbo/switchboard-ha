@@ -22,6 +22,7 @@ from .const import DOMAIN
 SERVICE_RUN_ACTION = "run_action"
 SERVICE_OBS_SCENE_SET = "obs_scene_set"
 SERVICE_OVERLAY_ALERT = "overlay_alert"
+SERVICE_SET_MACHINE_STATE = "set_machine_state"
 
 ATTR_ACTION_TYPE = "action_type"
 ATTR_TARGET = "target"
@@ -29,6 +30,7 @@ ATTR_VALUE = "value"
 ATTR_ACTION_PARAMS = "action_params"
 ATTR_SCENE = "scene"
 ATTR_TEXT = "text"
+ATTR_STATE = "state"
 
 RUN_ACTION_SCHEMA = vol.Schema(
     {
@@ -47,6 +49,8 @@ OBS_SCENE_SET_SCHEMA = vol.Schema(
 )
 
 OVERLAY_ALERT_SCHEMA = vol.Schema({vol.Required(ATTR_TEXT): cv.string})
+
+SET_MACHINE_STATE_SCHEMA = vol.Schema({vol.Required(ATTR_STATE): vol.In(["afk", "active"])})
 
 
 def _coordinators(hass: HomeAssistant) -> list[Any]:
@@ -113,6 +117,13 @@ def async_register_services(hass: HomeAssistant) -> None:
             {"action_type": "overlay_alert_show", "value": call.data[ATTR_TEXT]},
         )
 
+    async def handle_set_machine_state(call: ServiceCall) -> None:
+        coord, _ = _pick(hass, "")
+        await _send(
+            coord,
+            {"action_type": "machine_state_set", "value": call.data[ATTR_STATE]},
+        )
+
     hass.services.async_register(
         DOMAIN, SERVICE_RUN_ACTION, handle_run_action, schema=RUN_ACTION_SCHEMA
     )
@@ -122,9 +133,17 @@ def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_OVERLAY_ALERT, handle_overlay_alert, schema=OVERLAY_ALERT_SCHEMA
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_MACHINE_STATE, handle_set_machine_state, schema=SET_MACHINE_STATE_SCHEMA
+    )
 
 
 def async_unregister_services(hass: HomeAssistant) -> None:
     """Remove services when the last entry unloads."""
-    for service in (SERVICE_RUN_ACTION, SERVICE_OBS_SCENE_SET, SERVICE_OVERLAY_ALERT):
+    for service in (
+        SERVICE_RUN_ACTION,
+        SERVICE_OBS_SCENE_SET,
+        SERVICE_OVERLAY_ALERT,
+        SERVICE_SET_MACHINE_STATE,
+    ):
         hass.services.async_remove(DOMAIN, service)

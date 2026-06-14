@@ -25,6 +25,9 @@ entities, and lets HA drive Switchboard actions through services.
   `value`, `action_params`); forward-compatible with new Switchboard actions.
 - `switchboard.obs_scene_set` — switch an OBS connection's program scene.
 - `switchboard.overlay_alert` — show an alert on the Switchboard alerts overlay.
+- `switchboard.set_machine_state` — set Switchboard's machine state (`afk` / `active`), e.g. from an
+  HA presence automation; fires Switchboard's `machine_state_*` triggers so it runs its own AFK
+  automations (and flips back to active on input).
 
 `target` accepts a friendly connection **label** or its **id** (anything that isn't a known
 connection — e.g. the `spotify` sentinel — is passed through unchanged).

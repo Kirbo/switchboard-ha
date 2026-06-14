@@ -72,6 +72,16 @@
           "description": "The alert text to display."
         }
       }
+    },
+    "set_machine_state": {
+      "name": "Set machine state (AFK)",
+      "description": "Set the Switchboard machine's explicit state, firing its machine_state_afk / machine_state_active automations.",
+      "fields": {
+        "state": {
+          "name": "State",
+          "description": "afk or active."
+        }
+      }
     }
   }
 }
