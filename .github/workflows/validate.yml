@@ -22,3 +22,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: home-assistant/actions/hassfest@master
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [hacs, hassfest]
+    # Only cut releases on pushes to main, after validation passes.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@v2
+      - name: CalVer release (git-cliff notes)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/release.sh

@@ -8,6 +8,8 @@ python = "3.13"
 ruff = "latest"
 # Fast venv + installer for pulling in homeassistant locally.
 uv = "latest"
+# Changelog/release-notes generator for the CalVer release job (same as the main repo).
+git-cliff = "latest"
 
 [tasks.lint]
 description = "Lint the integration with ruff"
