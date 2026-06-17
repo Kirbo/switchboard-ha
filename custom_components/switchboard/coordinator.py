@@ -120,11 +120,19 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
     async def _ws_loop(self) -> None:
         backoff = 1
+        first = True
         while not self._closing:
             try:
                 async with self.client.ws_connect() as ws:
                     _LOGGER.debug("switchboard: events websocket connected")
                     backoff = 1
+                    # On every RE-connect, re-fetch the snapshot: the event stream only carries
+                    # *changes*, so anything that changed while we were disconnected (machine
+                    # locked/suspended, network blip) was missed and our patched state is stale.
+                    # The first connect already has a fresh snapshot from setup's update.
+                    if not first:
+                        await self._resync()
+                    first = False
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             self._handle_frame(msg.json())
@@ -140,6 +148,18 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 break
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
+
+    async def _resync(self) -> None:
+        """Re-fetch the full snapshot and replace self.data — used after a ws reconnect to recover
+        any state we missed while disconnected. Connections are refreshed too in case they changed.
+        """
+        try:
+            self.connections = await self.client.fetch_connections()
+            raw = await self.client.fetch_state()
+        except SwitchboardApiError as err:
+            _LOGGER.debug("switchboard: snapshot resync after reconnect failed: %s", err)
+            return
+        self.async_set_updated_data(_state_from_snapshot(raw))
 
     @callback
     def _handle_frame(self, frame: dict[str, Any]) -> None:
