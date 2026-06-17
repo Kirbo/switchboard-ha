@@ -174,8 +174,8 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 inst["recording"] = bool(frame.get("active"))
             return True
 
-        if etype == "afk_changed":
-            data.afk = bool(frame.get("active"))
+        if etype == "machine_state_changed":
+            data.afk = frame.get("state") == "afk"
             return True
 
         if etype in ("spotify_song_changed", "spotify_playback_started", "spotify_now_playing"):
