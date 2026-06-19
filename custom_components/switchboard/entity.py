@@ -54,3 +54,21 @@ class SwitchboardObsEntity(SwitchboardEntity):
     @property
     def available(self) -> bool:
         return super().available and self._cid in self.coordinator.data.obs
+
+
+class SwitchboardTwitchEntity(SwitchboardEntity):
+    """Entity for one Twitch connection (its own device under the hub)."""
+
+    def __init__(
+        self, coordinator: SwitchboardCoordinator, entry: ConfigEntry, connection_id: str
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._cid = connection_id
+        label = coordinator.connection_label(connection_id)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry.entry_id}:{connection_id}")},
+            name=label,
+            manufacturer="Switchboard",
+            model="Twitch",
+            via_device=(DOMAIN, entry.entry_id),
+        )

@@ -38,6 +38,22 @@ class SwitchboardData:
     spotify: str = SPOTIFY_STOPPED
     spotify_now: dict[str, Any] | None = None
     afk: bool = False
+    twitch: dict[str, dict[str, Any]] = field(default_factory=dict)  # connection_id -> live data
+    version: str = ""
+    update: dict[str, Any] | None = None  # {version, body, ready} or None
+
+
+_TWITCH_KEYS = (
+    "label",
+    "live",
+    "viewers",
+    "chatters",
+    "title",
+    "category_id",
+    "category_name",
+    "box_art_url",
+    "started_at_ms",
+)
 
 
 def _state_from_snapshot(raw: dict[str, Any]) -> SwitchboardData:
@@ -50,11 +66,19 @@ def _state_from_snapshot(raw: dict[str, Any]) -> SwitchboardData:
             "recording": o.get("recording", False),
             "current_scene": o.get("current_scene"),
             "stream_started_ms": o.get("stream_started_ms"),
+            "stream_delay_secs": o.get("stream_delay_secs"),
         }
+    twitch: dict[str, dict[str, Any]] = {}
+    for tw in raw.get("twitch", []):
+        twitch[tw["id"]] = {k: tw.get(k) for k in _TWITCH_KEYS}
     return SwitchboardData(
         obs=obs,
         spotify=raw.get("spotify", SPOTIFY_STOPPED),
+        spotify_now=raw.get("spotify_now"),
         afk=raw.get("afk", False),
+        twitch=twitch,
+        version=raw.get("version", ""),
+        update=raw.get("update"),
     )
 
 
@@ -99,6 +123,15 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
     def obs_ids(self) -> set[str]:
         return {c["id"] for c in self.connections if c["integration"] == "obs"}
+
+    def twitch_ids(self) -> set[str]:
+        return {c["id"] for c in self.connections if c["integration"] == "twitch"}
+
+    def connection_label(self, connection_id: str) -> str:
+        for c in self.connections:
+            if c["id"] == connection_id:
+                return c.get("label", connection_id)
+        return connection_id
 
     def resolve_connection_id(self, target: str, integration: str | None = None) -> str:
         """Accept either a raw id or a friendly label; return the id. Raises on ambiguity."""
@@ -196,6 +229,28 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
         if etype == "machine_state_changed":
             data.afk = frame.get("state") == "afk"
+            return True
+
+        if etype == "twitch_stream_status":
+            inst = data.twitch.setdefault(cid, {})
+            for k in ("live", "title", "category_id", "category_name", "box_art_url", "started_at_ms"):
+                inst[k] = frame.get(k)
+            return True
+        if etype == "twitch_chatters_updated":
+            inst = data.twitch.setdefault(cid, {})
+            inst["viewers"] = frame.get("watching")
+            inst["chatters"] = frame.get("chatters")
+            return True
+
+        if etype == "update_available":
+            data.update = {
+                "version": frame.get("version"),
+                "body": frame.get("body"),
+                "ready": False,
+            }
+            return True
+        if etype == "update_ready":
+            data.update = {"version": frame.get("version"), "ready": True}
             return True
 
         if etype in ("spotify_song_changed", "spotify_playback_started", "spotify_now_playing"):

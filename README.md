@@ -13,11 +13,14 @@ entities, and lets HA drive Switchboard actions through services.
 
 ## What you get
 
-**Entities** (one device per OBS connection, plus a Switchboard service device):
+**Entities** (one device per OBS / Twitch connection, plus a Switchboard service device):
 
-- **Binary sensors** — per OBS connection: `connected`, `streaming`, `recording`; global: `AFK`.
-- **Sensors** — per OBS connection: current `Scene`; global: `Spotify` playback
-  (`playing`/`paused`/`stopped`) with now-playing attributes (title, artist, album, …).
+- **Binary sensors** — per OBS connection: `connected`, `streaming`, `recording`; per Twitch
+  connection: `Live`; global: `AFK`, `Update available`.
+- **Sensors** — per OBS connection: current `Scene`; per Twitch connection: `Viewers`, `Chatters`,
+  `Category` (with box-art URL + title attributes); global: `Spotify` playback
+  (`playing`/`paused`/`stopped`) with now-playing attributes (title, artist, album, art_url, …) and
+  `Version` (with any pending-update attributes).
 
 **Services** (→ `POST /api/command`):
 
