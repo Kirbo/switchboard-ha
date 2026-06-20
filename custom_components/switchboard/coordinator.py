@@ -97,6 +97,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         self.connections: list[dict[str, Any]] = []
         self._closing = False
         self._ws_task: asyncio.Task[None] | None = None
+        self._refreshing = False
 
     async def _async_update_data(self) -> SwitchboardData:
         try:
@@ -233,7 +234,14 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
         if etype == "twitch_stream_status":
             inst = data.twitch.setdefault(cid, {})
-            for k in ("live", "title", "category_id", "category_name", "box_art_url", "started_at_ms"):
+            for k in (
+                "live",
+                "title",
+                "category_id",
+                "category_name",
+                "box_art_url",
+                "started_at_ms",
+            ):
                 inst[k] = frame.get(k)
             return True
         if etype == "twitch_chatters_updated":
@@ -250,13 +258,23 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             }
             return True
         if etype == "update_ready":
-            data.update = {"version": frame.get("version"), "ready": True}
+            # Carry forward any previously-shown body; update_ready only signals readiness.
+            data.update = {
+                **(data.update or {}),
+                "version": frame.get("version"),
+                "ready": True,
+            }
             return True
 
         if etype in ("spotify_song_changed", "spotify_playback_started", "spotify_now_playing"):
             now = frame.get("now")
             data.spotify_now = now
-            data.spotify = SPOTIFY_PLAYING if (now and now.get("playing")) else SPOTIFY_PAUSED
+            # `now is None` means nothing is playing (per the app's SpotifyNowPlaying contract) →
+            # the gate is "stopped", not "paused". A present-but-not-playing track is paused.
+            if now is None:
+                data.spotify = SPOTIFY_STOPPED
+            else:
+                data.spotify = SPOTIFY_PLAYING if now.get("playing") else SPOTIFY_PAUSED
             return True
         if etype == "spotify_playback_paused":
             data.spotify_now = frame.get("now")
@@ -270,14 +288,24 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         return False
 
     async def _refresh_connections(self) -> None:
-        try:
-            new_conns = await self.client.fetch_connections()
-        except SwitchboardApiError as err:
-            _LOGGER.debug("switchboard: connection refresh failed: %s", err)
+        if self._refreshing:
+            # A refresh is already in flight; let it pick up the latest set. Avoids overlapping
+            # async_reload calls racing the same entry when connections_changed arrives in bursts.
             return
-        before = self.obs_ids()
-        self.connections = new_conns
-        after = self.obs_ids()
-        if before != after:
-            # New/removed OBS instance → entities must be (re)built; reload the entry.
-            self.hass.async_create_task(self.hass.config_entries.async_reload(self.entry.entry_id))
+        self._refreshing = True
+        try:
+            try:
+                new_conns = await self.client.fetch_connections()
+            except SwitchboardApiError as err:
+                _LOGGER.debug("switchboard: connection refresh failed: %s", err)
+                return
+            before = self.obs_ids() | self.twitch_ids()
+            self.connections = new_conns
+            after = self.obs_ids() | self.twitch_ids()
+            if before != after:
+                # New/removed OBS or Twitch connection → entities must be (re)built; reload entry.
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.entry.entry_id)
+                )
+        finally:
+            self._refreshing = False

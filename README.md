@@ -57,10 +57,10 @@ automation:
 
 - Switchboard running with the **External API enabled** — generate a token in
   **Settings → External API** (shown once).
-- The **Events** and **Control** IP ACLs must allow your Home Assistant host. They default to
-  **local-only**, so if HA runs on a different machine than Switchboard, add HA's IP to the
-  whitelist (Settings → External API for Events; Peers tab for Control) — otherwise the websocket
-  and service calls are rejected with `403`.
+- The **Events** and **Control** IP ACLs (`events_access_*` / `control_access_*`) must allow your
+  Home Assistant host. They default to **local-only**, so if HA runs on a different machine than
+  Switchboard, add HA's IP to both ACLs in **Settings → External API** — otherwise the websocket
+  (Events) and service calls (Control) are rejected with `403`.
 
 ## Installation
 

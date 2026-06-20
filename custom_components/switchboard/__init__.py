@@ -11,6 +11,7 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import SwitchboardClient
@@ -23,14 +24,19 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Switchboard from a config entry."""
-    client = SwitchboardClient(
-        async_get_clientsession(hass),
-        entry.data[CONF_HOST],
-        entry.data[CONF_PORT],
-        entry.data[CONF_TOKEN],
-        verify_ssl=entry.data.get(CONF_VERIFY_SSL, False),
-        fingerprint=entry.data.get(CONF_FINGERPRINT) or None,
-    )
+    try:
+        client = SwitchboardClient(
+            async_get_clientsession(hass),
+            entry.data[CONF_HOST],
+            entry.data[CONF_PORT],
+            entry.data[CONF_TOKEN],
+            verify_ssl=entry.data.get(CONF_VERIFY_SSL, False),
+            fingerprint=entry.data.get(CONF_FINGERPRINT) or None,
+        )
+    except ValueError as err:
+        # A corrupted stored TLS fingerprint makes bytes.fromhex raise; surface a clean retry
+        # instead of an uncaught error so the user can reconfigure the pin.
+        raise ConfigEntryNotReady(f"invalid stored TLS fingerprint: {err}") from err
     coordinator = SwitchboardCoordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
 
