@@ -93,6 +93,15 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 - This integration lives in its own repo (not the Switchboard monorepo) because HACS only installs
   from GitHub. The API contract it targets is documented in the app's `docs/HA.md`.
 
+## Related
+
+- **[Switchboard](https://gitlab.com/KirboDev/agentic-coding/switchboard)** — the desktop app this
+  integration controls (OBS / Twitch / Spotify / Discord + an event→action rules engine). The `/api`
+  contract is [`docs/HA.md`](https://gitlab.com/KirboDev/agentic-coding/switchboard/-/blob/main/docs/HA.md).
+- **[OpenDeck plugin](https://gitlab.com/KirboDev/agentic-coding/opendeck/opendeck-switchboard)** — the
+  sibling plugin: live Switchboard state on a Stream Deck / OpenDeck, plus command keys. Same `/api`
+  surface, a different consumer.
+
 ## License
 
 MIT
