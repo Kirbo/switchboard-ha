@@ -266,7 +266,12 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             }
             return True
 
-        if etype in ("spotify_song_changed", "spotify_playback_started", "spotify_now_playing"):
+        if etype in (
+            "spotify_song_changed",
+            "spotify_playlist_changed",
+            "spotify_playback_started",
+            "spotify_now_playing",
+        ):
             now = frame.get("now")
             data.spotify_now = now
             # `now is None` means nothing is playing (per the app's SpotifyNowPlaying contract) →
