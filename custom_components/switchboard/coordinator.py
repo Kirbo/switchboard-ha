@@ -29,6 +29,10 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Reconnect backoff ladder (seconds): never stops retrying, capped at 60s. Reset to step 0 on a
+# successful connect. Matches the Switchboard app's own app→HA ladder.
+RECONNECT_LADDER = (1, 2, 3, 5, 10, 15, 30, 45, 60)
+
 
 @dataclass
 class SwitchboardData:
@@ -153,13 +157,13 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
     # --- events websocket --------------------------------------------------------------------
 
     async def _ws_loop(self) -> None:
-        backoff = 1
+        step = 0
         first = True
         while not self._closing:
             try:
                 async with self.client.ws_connect() as ws:
                     _LOGGER.debug("switchboard: events websocket connected")
-                    backoff = 1
+                    step = 0
                     # On every RE-connect, re-fetch the snapshot: the event stream only carries
                     # *changes*, so anything that changed while we were disconnected (machine
                     # locked/suspended, network blip) was missed and our patched state is stale.
@@ -180,8 +184,8 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 _LOGGER.debug("switchboard: events websocket dropped: %s", err)
             if self._closing:
                 break
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+            await asyncio.sleep(RECONNECT_LADDER[step])
+            step = min(step + 1, len(RECONNECT_LADDER) - 1)
 
     async def _resync(self) -> None:
         """Re-fetch the full snapshot and replace self.data — used after a ws reconnect to recover
