@@ -28,6 +28,7 @@ async def async_setup_entry(
     coordinator: SwitchboardCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[BinarySensorEntity] = [
         SwitchboardAfkSensor(coordinator, entry),
+        SwitchboardAppActiveSensor(coordinator, entry),
         UpdateAvailableSensor(coordinator, entry),
     ]
     for cid in coordinator.obs_ids():
@@ -68,6 +69,22 @@ class SwitchboardAfkSensor(SwitchboardHubEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return bool(self.coordinator.data.afk)
+
+
+class SwitchboardAppActiveSensor(SwitchboardHubEntity, BinarySensorEntity):
+    """Whether a watched app is currently in play (focused or running) on this machine."""
+
+    _attr_name = "Watched app active"
+    _attr_icon = "mdi:gamepad-variant"
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_watched_app_active"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator.data.watched_app_active)
 
 
 class TwitchLiveSensor(SwitchboardTwitchEntity, BinarySensorEntity):

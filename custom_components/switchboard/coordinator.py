@@ -45,6 +45,9 @@ class SwitchboardData:
     twitch: dict[str, dict[str, Any]] = field(default_factory=dict)  # connection_id -> live data
     version: str = ""
     update: dict[str, Any] | None = None  # {version, body, ready} or None
+    # App-detection: the focused app id (or None) + whether any watched app is focused/running.
+    focused_app: str | None = None
+    watched_app_active: bool = False
 
 
 _TWITCH_KEYS = (
@@ -75,6 +78,7 @@ def _state_from_snapshot(raw: dict[str, Any]) -> SwitchboardData:
     twitch: dict[str, dict[str, Any]] = {}
     for tw in raw.get("twitch", []):
         twitch[tw["id"]] = {k: tw.get(k) for k in _TWITCH_KEYS}
+    apps = raw.get("apps") or {}
     return SwitchboardData(
         obs=obs,
         spotify=raw.get("spotify", SPOTIFY_STOPPED),
@@ -83,6 +87,8 @@ def _state_from_snapshot(raw: dict[str, Any]) -> SwitchboardData:
         twitch=twitch,
         version=raw.get("version", ""),
         update=raw.get("update"),
+        focused_app=apps.get("focused"),
+        watched_app_active=bool(apps.get("watched_focused") or apps.get("watched_running")),
     )
 
 
@@ -234,6 +240,13 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
         if etype == "machine_state_changed":
             data.afk = frame.get("state") == "afk"
+            return True
+
+        if etype == "app_detect_changed":
+            data.focused_app = frame.get("focused")
+            data.watched_app_active = bool(
+                frame.get("watched_focused") or frame.get("watched_running")
+            )
             return True
 
         if etype == "twitch_stream_status":

@@ -21,6 +21,7 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [
         SpotifySensor(coordinator, entry),
         AppVersionSensor(coordinator, entry),
+        FocusedAppSensor(coordinator, entry),
     ]
     entities += [ObsSceneSensor(coordinator, entry, cid) for cid in coordinator.obs_ids()]
     for cid in coordinator.twitch_ids():
@@ -46,6 +47,21 @@ class ObsSceneSensor(SwitchboardObsEntity, SensorEntity):
     def native_value(self) -> str | None:
         inst = self.coordinator.data.obs.get(self._cid)
         return inst.get("current_scene") if inst else None
+
+
+class FocusedAppSensor(SwitchboardHubEntity, SensorEntity):
+    """The currently-focused app id (app-detection), or None when unknown."""
+
+    _attr_name = "Focused app"
+    _attr_icon = "mdi:application"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_focused_app"
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.data.focused_app
 
 
 class SpotifySensor(SwitchboardHubEntity, SensorEntity):
