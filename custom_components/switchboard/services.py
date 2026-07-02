@@ -31,6 +31,11 @@ ATTR_ACTION_PARAMS = "action_params"
 ATTR_SCENE = "scene"
 ATTR_TEXT = "text"
 ATTR_STATE = "state"
+ATTR_ENTRY_ID = "entry_id"
+
+# Every service takes an optional entry_id so a specific Switchboard instance can be addressed
+# when several machines are configured (without it, the first entry wins).
+_ENTRY_FIELD = {vol.Optional(ATTR_ENTRY_ID, default=""): cv.string}
 
 RUN_ACTION_SCHEMA = vol.Schema(
     {
@@ -38,6 +43,7 @@ RUN_ACTION_SCHEMA = vol.Schema(
         vol.Optional(ATTR_TARGET, default=""): cv.string,
         vol.Optional(ATTR_VALUE, default=""): cv.string,
         vol.Optional(ATTR_ACTION_PARAMS, default=dict): dict,
+        **_ENTRY_FIELD,
     }
 )
 
@@ -45,29 +51,43 @@ OBS_SCENE_SET_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_TARGET): cv.string,
         vol.Required(ATTR_SCENE): cv.string,
+        **_ENTRY_FIELD,
     }
 )
 
-OVERLAY_ALERT_SCHEMA = vol.Schema({vol.Required(ATTR_TEXT): cv.string})
+OVERLAY_ALERT_SCHEMA = vol.Schema({vol.Required(ATTR_TEXT): cv.string, **_ENTRY_FIELD})
 
-SET_MACHINE_STATE_SCHEMA = vol.Schema({vol.Required(ATTR_STATE): vol.In(["afk", "active"])})
-
-
-def _coordinators(hass: HomeAssistant) -> list[Any]:
-    return list(hass.data.get(DOMAIN, {}).values())
+SET_MACHINE_STATE_SCHEMA = vol.Schema(
+    {vol.Required(ATTR_STATE): vol.In(["afk", "active"]), **_ENTRY_FIELD}
+)
 
 
-def _pick(hass: HomeAssistant, target: str) -> tuple[Any, str]:
+def _pick(hass: HomeAssistant, target: str, entry_id: str = "") -> tuple[Any, str]:
     """Choose a coordinator + resolve the target to a connection id (or pass through)."""
-    coords = _coordinators(hass)
+    domain_data = hass.data.get(DOMAIN, {})
+    if entry_id:
+        coord = domain_data.get(entry_id)
+        if coord is None:
+            raise HomeAssistantError(f"no Switchboard config entry with id '{entry_id}'")
+        coords = [coord]
+    else:
+        coords = list(domain_data.values())
     if not coords:
         raise HomeAssistantError("Switchboard is not set up")
     if target:
+        ambiguous: ValueError | None = None
         for coord in coords:
             try:
-                return coord, coord.resolve_connection_id(target)
-            except ValueError:
+                resolved = coord.resolve_connection_id(target)
+            except ValueError as err:
+                # Ambiguous label on this instance — remember the actionable message instead of
+                # silently posting the raw label as a connection id (an opaque backend 400).
+                ambiguous = err
                 continue
+            if resolved is not None:
+                return coord, resolved
+        if ambiguous is not None:
+            raise HomeAssistantError(str(ambiguous)) from ambiguous
         # Unknown to every instance — treat as a literal sentinel/id on the first one.
         return coords[0], target
     return coords[0], ""
@@ -83,12 +103,12 @@ async def _send(coord: Any, payload: dict[str, Any]) -> None:
 
 
 def async_register_services(hass: HomeAssistant) -> None:
-    """Register domain services once (idempotent across multiple config entries)."""
+    """Register domain services (called once from async_setup; guarded for safety)."""
     if hass.services.has_service(DOMAIN, SERVICE_RUN_ACTION):
         return
 
     async def handle_run_action(call: ServiceCall) -> None:
-        coord, target_id = _pick(hass, call.data[ATTR_TARGET])
+        coord, target_id = _pick(hass, call.data[ATTR_TARGET], call.data[ATTR_ENTRY_ID])
         await _send(
             coord,
             {
@@ -100,7 +120,7 @@ def async_register_services(hass: HomeAssistant) -> None:
         )
 
     async def handle_obs_scene_set(call: ServiceCall) -> None:
-        coord, target_id = _pick(hass, call.data[ATTR_TARGET])
+        coord, target_id = _pick(hass, call.data[ATTR_TARGET], call.data[ATTR_ENTRY_ID])
         await _send(
             coord,
             {
@@ -111,14 +131,14 @@ def async_register_services(hass: HomeAssistant) -> None:
         )
 
     async def handle_overlay_alert(call: ServiceCall) -> None:
-        coord, _ = _pick(hass, "")
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
         await _send(
             coord,
             {"action_type": "overlay_alert_show", "value": call.data[ATTR_TEXT]},
         )
 
     async def handle_set_machine_state(call: ServiceCall) -> None:
-        coord, _ = _pick(hass, "")
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
         await _send(
             coord,
             {"action_type": "machine_state_set", "value": call.data[ATTR_STATE]},
@@ -136,14 +156,3 @@ def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_SET_MACHINE_STATE, handle_set_machine_state, schema=SET_MACHINE_STATE_SCHEMA
     )
-
-
-def async_unregister_services(hass: HomeAssistant) -> None:
-    """Remove services when the last entry unloads."""
-    for service in (
-        SERVICE_RUN_ACTION,
-        SERVICE_OBS_SCENE_SET,
-        SERVICE_OVERLAY_ALERT,
-        SERVICE_SET_MACHINE_STATE,
-    ):
-        hass.services.async_remove(DOMAIN, service)

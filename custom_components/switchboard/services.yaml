@@ -17,6 +17,11 @@ run_action:
       example: '{"remember": true}'
       selector:
         object:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
 
 obs_scene_set:
   fields:
@@ -30,6 +35,11 @@ obs_scene_set:
       example: Gaming
       selector:
         text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
 
 overlay_alert:
   fields:
@@ -38,6 +48,11 @@ overlay_alert:
       example: Be right back!
       selector:
         text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
 
 set_machine_state:
   fields:
@@ -49,3 +64,8 @@ set_machine_state:
           options:
             - afk
             - active
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard

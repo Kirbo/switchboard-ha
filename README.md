@@ -35,7 +35,9 @@ entities, and lets HA drive Switchboard actions through services.
   automations (and flips back to active on input).
 
 `target` accepts a friendly connection **label** or its **id** (anything that isn't a known
-connection — e.g. the `spotify` sentinel — is passed through unchanged).
+connection — e.g. the `spotify` sentinel — is passed through unchanged). Every service also takes an
+optional `entry_id` to address a specific instance when several Switchboard machines are configured
+(leave blank with a single instance).
 
 **Bus event** — every Switchboard event is re-fired as `switchboard_event` (with its raw `type` and
 fields), so you can trigger HA automations on `twitch_event`, `rule_fired`, `obs_scene_changed`, etc.
@@ -48,7 +50,7 @@ automation:
         event_type: switchboard_event
         event_data:
           type: twitch_event
-          kind: raid
+          kind: twitch_raid
     action:
       - service: switchboard.overlay_alert
         data:

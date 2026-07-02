@@ -18,7 +18,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import SwitchboardApiError, SwitchboardClient
+from .api import SwitchboardApiError, SwitchboardAuthError, SwitchboardClient
 from .const import (
     DOMAIN,
     EVENT_SWITCHBOARD,
@@ -72,8 +72,6 @@ def _state_from_snapshot(raw: dict[str, Any]) -> SwitchboardData:
             "streaming": o.get("streaming", False),
             "recording": o.get("recording", False),
             "current_scene": o.get("current_scene"),
-            "stream_started_ms": o.get("stream_started_ms"),
-            "stream_delay_secs": o.get("stream_delay_secs"),
         }
     twitch: dict[str, dict[str, Any]] = {}
     for tw in raw.get("twitch", []):
@@ -108,6 +106,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         self._closing = False
         self._ws_task: asyncio.Task[None] | None = None
         self._refreshing = False
+        self._refresh_again = False
 
     async def _async_update_data(self) -> SwitchboardData:
         try:
@@ -144,8 +143,13 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 return c.get("label", connection_id)
         return connection_id
 
-    def resolve_connection_id(self, target: str, integration: str | None = None) -> str:
-        """Accept either a raw id or a friendly label; return the id. Raises on ambiguity."""
+    def resolve_connection_id(self, target: str, integration: str | None = None) -> str | None:
+        """Accept either a raw id or a friendly label; return the id.
+
+        Returns None when nothing matches (caller decides how to fall back) and raises
+        ValueError when a label matches MORE than one connection — the two cases must stay
+        distinguishable, or an ambiguous label silently degrades into a bogus id.
+        """
         for c in self.connections:
             if c["id"] == target:
                 return c["id"]
@@ -157,52 +161,72 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         if len(matches) == 1:
             return matches[0]["id"]
         if not matches:
-            raise ValueError(f"no connection matches '{target}'")
+            return None
         raise ValueError(f"'{target}' is ambiguous — use the connection id")
 
     # --- events websocket --------------------------------------------------------------------
 
     async def _ws_loop(self) -> None:
         step = 0
-        first = True
         while not self._closing:
             try:
                 async with self.client.ws_connect() as ws:
                     _LOGGER.debug("switchboard: events websocket connected")
                     step = 0
-                    # On every RE-connect, re-fetch the snapshot: the event stream only carries
-                    # *changes*, so anything that changed while we were disconnected (machine
-                    # locked/suspended, network blip) was missed and our patched state is stale.
-                    # The first connect already has a fresh snapshot from setup's update.
-                    if not first:
-                        await self._resync()
-                    first = False
+                    # On EVERY connect (first included), re-fetch the snapshot: the event stream
+                    # only carries *changes*, so anything that happened between setup's snapshot
+                    # (or a disconnect) and this socket opening was missed and our state is stale.
+                    await self._resync()
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
-                            self._handle_frame(msg.json())
+                            try:
+                                self._handle_frame(msg.json())
+                            except Exception:  # one bad frame must not kill the loop
+                                _LOGGER.exception("switchboard: failed to handle event frame")
                         elif msg.type in (
                             aiohttp.WSMsgType.CLOSED,
                             aiohttp.WSMsgType.CLOSING,
                             aiohttp.WSMsgType.ERROR,
                         ):
                             break
+            except asyncio.CancelledError:
+                raise
+            except aiohttp.WSServerHandshakeError as err:
+                # A revoked/rotated token surfaces here as a 401 on the upgrade request.
+                if err.status == 401:
+                    self._start_reauth()
+                else:
+                    _LOGGER.debug("switchboard: events websocket handshake failed: %s", err)
+            except SwitchboardAuthError:
+                # The resync REST calls got a 401 — same revoked-token case.
+                self._start_reauth()
             except (TimeoutError, aiohttp.ClientError, SwitchboardApiError) as err:
                 _LOGGER.debug("switchboard: events websocket dropped: %s", err)
+            except Exception:  # this task must never die; entities freeze if it does
+                _LOGGER.exception("switchboard: unexpected error in events loop")
             if self._closing:
                 break
+            # Disconnected → entities go unavailable instead of freezing at stale values
+            # ("streaming: on" hours after the machine shut down). Restored by the resync above.
+            if self.last_update_success:
+                self.last_update_success = False
+                self.async_update_listeners()
             await asyncio.sleep(RECONNECT_LADDER[step])
             step = min(step + 1, len(RECONNECT_LADDER) - 1)
 
+    def _start_reauth(self) -> None:
+        """Kick off the reauth flow (deduped by HA) — the token no longer works."""
+        _LOGGER.warning("switchboard: API token rejected — starting reauthentication")
+        self.entry.async_start_reauth(self.hass)
+
     async def _resync(self) -> None:
-        """Re-fetch the full snapshot and replace self.data — used after a ws reconnect to recover
-        any state we missed while disconnected. Connections are refreshed too in case they changed.
+        """Re-fetch connections + the full snapshot and replace self.data — run on every ws
+        connect to recover anything missed while disconnected. Raises on failure so the caller
+        drops the connection and retries with backoff (a connected socket patching a stale
+        snapshot is worse than a reconnect).
         """
-        try:
-            self.connections = await self.client.fetch_connections()
-            raw = await self.client.fetch_state()
-        except SwitchboardApiError as err:
-            _LOGGER.debug("switchboard: snapshot resync after reconnect failed: %s", err)
-            return
+        self.connections = await self.client.fetch_connections()
+        raw = await self.client.fetch_state()
         self.async_set_updated_data(_state_from_snapshot(raw))
 
     @callback
@@ -309,25 +333,41 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
         return False
 
+    def _entity_shape(self) -> set[tuple[str, str]]:
+        """(id, label) of every connection that backs entities — labels included so a rename
+        (which feeds device names) triggers a rebuild, not just an id-set change."""
+        return {
+            (c["id"], c.get("label", c["id"]))
+            for c in self.connections
+            if c["integration"] in ("obs", "twitch")
+        }
+
     async def _refresh_connections(self) -> None:
         if self._refreshing:
-            # A refresh is already in flight; let it pick up the latest set. Avoids overlapping
-            # async_reload calls racing the same entry when connections_changed arrives in bursts.
+            # A refresh is already in flight — flag it to run once more so a connections_changed
+            # that lands AFTER its fetch resolved isn't dropped. Avoids overlapping async_reload
+            # calls racing the same entry when events arrive in bursts.
+            self._refresh_again = True
             return
         self._refreshing = True
         try:
-            try:
-                new_conns = await self.client.fetch_connections()
-            except SwitchboardApiError as err:
-                _LOGGER.debug("switchboard: connection refresh failed: %s", err)
-                return
-            before = self.obs_ids() | self.twitch_ids()
-            self.connections = new_conns
-            after = self.obs_ids() | self.twitch_ids()
-            if before != after:
-                # New/removed OBS or Twitch connection → entities must be (re)built; reload entry.
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self.entry.entry_id)
-                )
+            while True:
+                self._refresh_again = False
+                try:
+                    new_conns = await self.client.fetch_connections()
+                except SwitchboardApiError as err:
+                    _LOGGER.debug("switchboard: connection refresh failed: %s", err)
+                    return
+                before = self._entity_shape()
+                self.connections = new_conns
+                if before != self._entity_shape():
+                    # Added/removed/renamed OBS or Twitch connection → entities and device names
+                    # must be (re)built; reload the entry (which also cancels this task's owner).
+                    self.hass.async_create_task(
+                        self.hass.config_entries.async_reload(self.entry.entry_id)
+                    )
+                    return
+                if not self._refresh_again:
+                    return
         finally:
             self._refreshing = False

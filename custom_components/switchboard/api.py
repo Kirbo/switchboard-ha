@@ -25,6 +25,11 @@ class SwitchboardAuthError(SwitchboardApiError):
     """The bearer token was missing/invalid (HTTP 401)."""
 
 
+class SwitchboardAccessError(SwitchboardApiError):
+    """The token is valid but this caller is denied by an ACL (HTTP 403) —
+    check the Events/Control ACLs under Settings → External API."""
+
+
 def build_ssl(verify_ssl: bool, fingerprint: str | None) -> aiohttp.Fingerprint | bool | None:
     """Map the user's TLS choice to an aiohttp `ssl=` value.
 
@@ -80,6 +85,8 @@ class SwitchboardClient:
             ) as resp:
                 if resp.status == 401:
                     raise SwitchboardAuthError("invalid or missing API token")
+                if resp.status == 403:
+                    raise SwitchboardAccessError("denied by the External API ACL")
                 if resp.status != 200:
                     raise SwitchboardApiError(f"GET {path} -> HTTP {resp.status}")
                 return await resp.json()
@@ -87,7 +94,8 @@ class SwitchboardClient:
             raise SwitchboardApiError(f"GET {path} failed: {err}") from err
 
     async def fetch_state(self) -> dict[str, Any]:
-        """Current machine snapshot: {obs:[...], spotify:'playing|paused|stopped', afk:bool}."""
+        """Current machine snapshot (docs/HA.md `ApiState`): {obs:[...], twitch:[...],
+        spotify:'playing|paused|stopped', spotify_now, afk:bool, apps, version, update}."""
         return await self._get("/api/state")
 
     async def fetch_connections(self) -> list[dict[str, Any]]:
@@ -106,6 +114,8 @@ class SwitchboardClient:
             ) as resp:
                 if resp.status == 401:
                     raise SwitchboardAuthError("invalid or missing API token")
+                if resp.status == 403:
+                    raise SwitchboardAccessError("denied by the External API ACL")
                 if resp.status != 200:
                     text = await resp.text()
                     raise SwitchboardApiError(f"command failed: HTTP {resp.status} {text}")

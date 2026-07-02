@@ -15,15 +15,40 @@
           "verify_ssl": "Leave off for Switchboard's self-signed certificate unless you front it with a trusted certificate.",
           "fingerprint": "Optional. Pin the self-signed certificate by its SHA-256 fingerprint (shown on the Peers tab) — recommended over disabling verification."
         }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Switchboard",
+        "description": "The API token for {host} was rejected. Generate a new token in Switchboard → Settings → External API and paste it here.",
+        "data": {
+          "token": "API token"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Switchboard",
+        "description": "Change the connection settings for this Switchboard instance.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "token": "API token",
+          "verify_ssl": "Verify TLS certificate",
+          "fingerprint": "TLS fingerprint (SHA-256)"
+        },
+        "data_description": {
+          "verify_ssl": "Leave off for Switchboard's self-signed certificate unless you front it with a trusted certificate.",
+          "fingerprint": "Optional. Pin the self-signed certificate by its SHA-256 fingerprint (shown on the Peers tab) — recommended over disabling verification."
+        }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect. Check the host, port, and that the External API is enabled.",
       "invalid_auth": "Invalid API token.",
+      "access_denied": "The token works, but this device is denied by the Events/Control ACLs — allow your Home Assistant IP in Switchboard → Settings → External API.",
       "bad_fingerprint": "The TLS fingerprint is not valid hex."
     },
     "abort": {
-      "already_configured": "This Switchboard instance is already configured."
+      "already_configured": "This Switchboard instance is already configured.",
+      "reauth_successful": "Reauthentication was successful.",
+      "reconfigure_successful": "Reconfiguration was successful."
     }
   },
   "services": {
@@ -46,6 +71,10 @@
         "action_params": {
           "name": "Action params",
           "description": "Optional extra action parameters as a JSON object, e.g. remember set to true."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
       }
     },
@@ -60,6 +89,10 @@
         "scene": {
           "name": "Scene",
           "description": "Name of the scene to switch to."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
       }
     },
@@ -70,6 +103,10 @@
         "text": {
           "name": "Text",
           "description": "The alert text to display."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
       }
     },
@@ -80,6 +117,10 @@
         "state": {
           "name": "State",
           "description": "afk or active."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
       }
     }
