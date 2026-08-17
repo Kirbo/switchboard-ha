@@ -18,7 +18,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import SwitchboardApiError, SwitchboardAuthError, SwitchboardClient
+from .api import (
+    SwitchboardAccessError,
+    SwitchboardApiError,
+    SwitchboardAuthError,
+    SwitchboardClient,
+)
 from .const import (
     DOMAIN,
     EVENT_SWITCHBOARD,
@@ -107,6 +112,9 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         self._ws_task: asyncio.Task[None] | None = None
         self._refreshing = False
         self._refresh_again = False
+        # Once-per-outage log gates — reset after a fully successful connect (ws + resync).
+        self._access_denied_logged = False
+        self._reauth_logged = False
 
     async def _async_update_data(self) -> SwitchboardData:
         try:
@@ -177,6 +185,8 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                     # only carries *changes*, so anything that happened between setup's snapshot
                     # (or a disconnect) and this socket opening was missed and our state is stale.
                     await self._resync()
+                    self._access_denied_logged = False
+                    self._reauth_logged = False
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
@@ -195,11 +205,16 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 # A revoked/rotated token surfaces here as a 401 on the upgrade request.
                 if err.status == 401:
                     self._start_reauth()
+                elif err.status == 403:
+                    self._log_access_denied()
                 else:
                     _LOGGER.debug("switchboard: events websocket handshake failed: %s", err)
             except SwitchboardAuthError:
                 # The resync REST calls got a 401 — same revoked-token case.
                 self._start_reauth()
+            except SwitchboardAccessError:
+                # The resync REST calls got a 403 — the token is fine but an ACL denies us.
+                self._log_access_denied()
             except (TimeoutError, aiohttp.ClientError, SwitchboardApiError) as err:
                 _LOGGER.debug("switchboard: events websocket dropped: %s", err)
             except Exception:  # this task must never die; entities freeze if it does
@@ -215,18 +230,37 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             step = min(step + 1, len(RECONNECT_LADDER) - 1)
 
     def _start_reauth(self) -> None:
-        """Kick off the reauth flow (deduped by HA) — the token no longer works."""
-        _LOGGER.warning("switchboard: API token rejected — starting reauthentication")
+        """Kick off the reauth flow (deduped by HA) — the token no longer works.
+
+        The log line is gated once per outage; HA dedups the flow itself, but the retry loop
+        would repeat the warning every backoff step while the reauth sits unresolved.
+        """
+        if not self._reauth_logged:
+            self._reauth_logged = True
+            _LOGGER.warning("switchboard: API token rejected — starting reauthentication")
         self.entry.async_start_reauth(self.hass)
+
+    def _log_access_denied(self) -> None:
+        """403: the token is valid but this caller is denied by an ACL. Warn once per outage —
+        the retry loop would otherwise repeat it every backoff step."""
+        if self._access_denied_logged:
+            return
+        self._access_denied_logged = True
+        _LOGGER.warning(
+            "switchboard: access denied (403) — check the Events ACL / allowlist under "
+            "Settings → External API; entities stay unavailable until access is restored"
+        )
 
     async def _resync(self) -> None:
         """Re-fetch connections + the full snapshot and replace self.data — run on every ws
         connect to recover anything missed while disconnected. Raises on failure so the caller
         drops the connection and retries with backoff (a connected socket patching a stale
-        snapshot is worse than a reconnect).
+        snapshot is worse than a reconnect). If the connection set changed shape while we were
+        down, this also schedules the entry reload that rebuilds the entities.
         """
-        self.connections = await self.client.fetch_connections()
+        new_conns = await self.client.fetch_connections()
         raw = await self.client.fetch_state()
+        self._replace_connections(new_conns)
         self.async_set_updated_data(_state_from_snapshot(raw))
 
     @callback
@@ -342,6 +376,18 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             if c["integration"] in ("obs", "twitch")
         }
 
+    def _replace_connections(self, new_conns: list[dict[str, Any]]) -> bool:
+        """Swap in a fresh connection list; if the entity-backing shape changed
+        (added/removed/renamed OBS or Twitch connection), entities and device names must be
+        (re)built — schedule an entry reload. Returns True when a reload was scheduled.
+        """
+        before = self._entity_shape()
+        self.connections = new_conns
+        if before == self._entity_shape():
+            return False
+        self.hass.async_create_task(self.hass.config_entries.async_reload(self.entry.entry_id))
+        return True
+
     async def _refresh_connections(self) -> None:
         if self._refreshing:
             # A refresh is already in flight — flag it to run once more so a connections_changed
@@ -358,14 +404,8 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 except SwitchboardApiError as err:
                     _LOGGER.debug("switchboard: connection refresh failed: %s", err)
                     return
-                before = self._entity_shape()
-                self.connections = new_conns
-                if before != self._entity_shape():
-                    # Added/removed/renamed OBS or Twitch connection → entities and device names
-                    # must be (re)built; reload the entry (which also cancels this task's owner).
-                    self.hass.async_create_task(
-                        self.hass.config_entries.async_reload(self.entry.entry_id)
-                    )
+                if self._replace_connections(new_conns):
+                    # Entry reload scheduled (which also cancels this task's owner).
                     return
                 if not self._refresh_again:
                     return
