@@ -1,7 +1,12 @@
 """Services that map to Switchboard's `POST /api/command` action executor.
 
 A generic `run_action` passthrough (forward-compatible with the additive action list in
-docs/HA.md) plus two conveniences. Targets accept a friendly connection label or a raw id;
+docs/HA.md) plus typed conveniences for the actions worth a proper UI: `obs_scene_set`,
+`overlay_alert_show`, `machine_state_set`, `ha_light_flash`, `afk_snooze`, `afk_reset_idle`.
+`ha_light_flash` (like `ha_service_call` and `discord_webhook_send`) requires the **global**
+External API token — a scope-limited plugin token cannot call it.
+
+Targets accept a friendly connection label or a raw id;
 anything that doesn't resolve to a known connection is passed through unchanged (so action
 sentinels like `spotify`, or ids from a not-yet-refreshed list, still work — the backend
 validates and 400s if truly wrong).
@@ -23,6 +28,9 @@ SERVICE_RUN_ACTION = "run_action"
 SERVICE_OBS_SCENE_SET = "obs_scene_set"
 SERVICE_OVERLAY_ALERT = "overlay_alert"
 SERVICE_SET_MACHINE_STATE = "set_machine_state"
+SERVICE_LIGHT_FLASH = "light_flash"
+SERVICE_AFK_SNOOZE = "afk_snooze"
+SERVICE_AFK_RESET_IDLE = "afk_reset_idle"
 
 ATTR_ACTION_TYPE = "action_type"
 ATTR_TARGET = "target"
@@ -32,6 +40,15 @@ ATTR_SCENE = "scene"
 ATTR_TEXT = "text"
 ATTR_STATE = "state"
 ATTR_ENTRY_ID = "entry_id"
+ATTR_ENTITY_ID = "entity_id"
+ATTR_FLASHES = "flashes"
+ATTR_COLOR = "color"
+ATTR_BRIGHTNESS = "brightness"
+ATTR_COLOR_TEMP_KELVIN = "color_temp_kelvin"
+ATTR_ON_MS = "on_ms"
+ATTR_OFF_MS = "off_ms"
+ATTR_TRANSITION_MS = "transition_ms"
+ATTR_SECONDS = "seconds"
 
 # Every service takes an optional entry_id so a specific Switchboard instance can be addressed
 # when several machines are configured (without it, the first entry wins).
@@ -59,6 +76,46 @@ OVERLAY_ALERT_SCHEMA = vol.Schema({vol.Required(ATTR_TEXT): cv.string, **_ENTRY_
 
 SET_MACHINE_STATE_SCHEMA = vol.Schema(
     {vol.Required(ATTR_STATE): vol.In(["afk", "active"]), **_ENTRY_FIELD}
+)
+
+# `ha_light_flash` — everything rides in action_params.ha_flash; only `entity_id` is required.
+# Ranges mirror the clamps the app applies at perform time (docs/HA.md Commands).
+LIGHT_FLASH_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.string,
+        vol.Optional(ATTR_TARGET, default=""): cv.string,
+        vol.Optional(ATTR_FLASHES): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
+        vol.Optional(ATTR_COLOR): cv.string,
+        vol.Optional(ATTR_BRIGHTNESS): vol.All(vol.Coerce(int), vol.Range(min=1, max=255)),
+        vol.Optional(ATTR_COLOR_TEMP_KELVIN): vol.All(
+            vol.Coerce(int), vol.Range(min=2000, max=6500)
+        ),
+        vol.Optional(ATTR_ON_MS): vol.All(vol.Coerce(int), vol.Range(min=100, max=5000)),
+        vol.Optional(ATTR_OFF_MS): vol.All(vol.Coerce(int), vol.Range(min=100, max=5000)),
+        vol.Optional(ATTR_TRANSITION_MS): vol.All(vol.Coerce(int), vol.Range(min=0, max=5000)),
+        **_ENTRY_FIELD,
+    }
+)
+
+# 0 cancels an active snooze; the app caps the accumulated window at 4 h.
+AFK_SNOOZE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_SECONDS): vol.All(vol.Coerce(int), vol.Range(min=0, max=4 * 60 * 60)),
+        **_ENTRY_FIELD,
+    }
+)
+
+AFK_RESET_IDLE_SCHEMA = vol.Schema(dict(_ENTRY_FIELD))
+
+# ha_flash keys forwarded verbatim when supplied (the app defaults anything omitted).
+_FLASH_KEYS = (
+    ATTR_FLASHES,
+    ATTR_COLOR,
+    ATTR_BRIGHTNESS,
+    ATTR_COLOR_TEMP_KELVIN,
+    ATTR_ON_MS,
+    ATTR_OFF_MS,
+    ATTR_TRANSITION_MS,
 )
 
 
@@ -143,6 +200,44 @@ def async_register_services(hass: HomeAssistant) -> None:
             coord,
             {"action_type": "machine_state_set", "value": call.data[ATTR_STATE]},
         )
+        coord.schedule_afk_refresh()
+
+    async def handle_light_flash(call: ServiceCall) -> None:
+        coord, target_id = _pick(hass, call.data[ATTR_TARGET], call.data[ATTR_ENTRY_ID])
+        if not target_id:
+            # The HA connection is optional in the service: with one configured (or one flagged
+            # default) the app's own smart-default applies, so resolve it here for a zero-click
+            # call and only complain when the choice is genuinely ambiguous.
+            target_id = coord.default_id("home_assistant") or ""
+            if not target_id:
+                raise HomeAssistantError(
+                    "no default Home Assistant connection in Switchboard — pass `target` with "
+                    "the connection label or id"
+                )
+        flash = {ATTR_ENTITY_ID: call.data[ATTR_ENTITY_ID]}
+        flash.update({k: call.data[k] for k in _FLASH_KEYS if k in call.data})
+        await _send(
+            coord,
+            {
+                "action_type": "ha_light_flash",
+                "target_connection_id": target_id,
+                "value": "",
+                "action_params": {"ha_flash": flash},
+            },
+        )
+
+    async def handle_afk_snooze(call: ServiceCall) -> None:
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+        await _send(
+            coord,
+            {"action_type": "afk_snooze", "value": str(call.data[ATTR_SECONDS])},
+        )
+        coord.schedule_afk_refresh()
+
+    async def handle_afk_reset_idle(call: ServiceCall) -> None:
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+        await _send(coord, {"action_type": "afk_reset_idle", "value": ""})
+        coord.schedule_afk_refresh()
 
     hass.services.async_register(
         DOMAIN, SERVICE_RUN_ACTION, handle_run_action, schema=RUN_ACTION_SCHEMA
@@ -155,4 +250,13 @@ def async_register_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_MACHINE_STATE, handle_set_machine_state, schema=SET_MACHINE_STATE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_LIGHT_FLASH, handle_light_flash, schema=LIGHT_FLASH_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_AFK_SNOOZE, handle_afk_snooze, schema=AFK_SNOOZE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_AFK_RESET_IDLE, handle_afk_reset_idle, schema=AFK_RESET_IDLE_SCHEMA
     )

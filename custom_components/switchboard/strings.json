@@ -123,6 +123,76 @@
           "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
       }
+    },
+    "light_flash": {
+      "name": "Flash a light",
+      "description": "Blink a light or light group N times in a colour through Switchboard's downstream Home Assistant connection, then restore its previous state. Requires the global External API token.",
+      "fields": {
+        "entity_id": {
+          "name": "Light entity",
+          "description": "The light or light group to flash, e.g. light.studio_key."
+        },
+        "target": {
+          "name": "Home Assistant connection",
+          "description": "Switchboard's Home Assistant connection label or id. Leave blank to use its default connection."
+        },
+        "flashes": {
+          "name": "Flashes",
+          "description": "Number of on/off cycles (1-20). Default 3."
+        },
+        "color": {
+          "name": "Colour",
+          "description": "Flash colour as #rrggbb. Default #a855f7."
+        },
+        "brightness": {
+          "name": "Brightness",
+          "description": "Flash brightness on Home Assistant's 1-255 scale. Default 255."
+        },
+        "color_temp_kelvin": {
+          "name": "Colour temperature",
+          "description": "Flash in a white colour temperature (2000-6500 K) instead of the colour."
+        },
+        "on_ms": {
+          "name": "On time",
+          "description": "How long the light holds the flash colour per cycle, in milliseconds (100-5000). Default 500."
+        },
+        "off_ms": {
+          "name": "Off time",
+          "description": "Gap between cycles with the light off, in milliseconds (100-5000). Default 500."
+        },
+        "transition_ms": {
+          "name": "Transition",
+          "description": "Transition passed to Home Assistant on every step, in milliseconds (0-5000). Default 150."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
+    "afk_snooze": {
+      "name": "Snooze AFK",
+      "description": "Hold off the idle-to-AFK automation for a while (mid-cutscene guard). Repeated calls stack, capped at 4 hours; 0 cancels an active snooze.",
+      "fields": {
+        "seconds": {
+          "name": "Seconds",
+          "description": "How long to snooze for. 0 cancels."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
+    "afk_reset_idle": {
+      "name": "Reset idle clock",
+      "description": "Reset Switchboard's idle clock without synthesizing input, postponing an idle-to-AFK rule. If the machine is already AFK, input can flip it back to active.",
+      "fields": {
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
     }
   }
 }
