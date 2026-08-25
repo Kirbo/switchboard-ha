@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -70,6 +73,26 @@ class SwitchboardAfkSensor(SwitchboardHubEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         return bool(self.coordinator.data.afk)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """The stable halves of `GET /api/afk`.
+
+        `threshold_secs` = the soonest idle→AFK rule threshold, with any per-scene override
+        applied (`None` = nothing will auto-set AFK). `snooze_until` = when an `afk_snooze`
+        window expires, as an absolute timestamp so it can't go stale between samples. The live
+        `idle_secs`/`afk_in_secs` countdown is intentionally absent — it moves every second, so
+        mirroring it would rewrite this entity (and its history) once a second; poll `/api/afk`
+        directly if you need a ticking countdown.
+        """
+        data = self.coordinator.data
+        until = data.afk_snooze_until_ms
+        return {
+            "threshold_secs": data.afk_threshold_secs,
+            "snooze_until": (
+                None if until is None else datetime.fromtimestamp(until / 1000, tz=UTC).isoformat()
+            ),
+        }
+
 
 class SwitchboardAppActiveSensor(SwitchboardHubEntity, BinarySensorEntity):
     """Whether a watched app is currently in play (focused or running) on this machine."""
@@ -109,6 +132,7 @@ class UpdateAvailableSensor(SwitchboardHubEntity, BinarySensorEntity):
     _attr_name = "Update available"
     _attr_device_class = BinarySensorDeviceClass.UPDATE
     _attr_icon = "mdi:package-up"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator, entry)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -38,6 +39,29 @@ _LOGGER = logging.getLogger(__name__)
 # successful connect. Matches the Switchboard app's own app→HA ladder.
 RECONNECT_LADDER = (1, 2, 3, 5, 10, 15, 30, 45, 60)
 
+# How long an /api/afk resample waits before firing, so a burst of scene changes costs one
+# request instead of one per event.
+AFK_COALESCE_SECS = 1.0
+
+# Events that patch one OBS instance (all keyed by `connection_id`).
+_OBS_EVENTS = (
+    "obs_scene_changed",
+    "obs_connection",
+    "obs_stream_state",
+    "obs_record_state",
+    "obs_scenes_changed",
+    "obs_delay_changed",
+    "stream_delay_changed",
+)
+
+# Events carrying a full NowPlaying payload for a track/context change.
+_SPOTIFY_TRACK_EVENTS = (
+    "spotify_song_changed",
+    "spotify_playlist_changed",
+    "spotify_playback_started",
+    "spotify_now_playing",
+)
+
 
 @dataclass
 class SwitchboardData:
@@ -50,9 +74,24 @@ class SwitchboardData:
     twitch: dict[str, dict[str, Any]] = field(default_factory=dict)  # connection_id -> live data
     version: str = ""
     update: dict[str, Any] | None = None  # {version, body, ready} or None
-    # App-detection: the focused app id (or None) + whether any watched app is focused/running.
+    # App-detection: the focused app id (or None), the running watch-list ids, and the two
+    # separate "a watched app is …" flags the contract distinguishes.
     focused_app: str | None = None
-    watched_app_active: bool = False
+    running_apps: list[str] = field(default_factory=list)
+    watched_focused: bool = False
+    watched_running: bool = False
+    # AFK numbers sampled from GET /api/afk. Only the two that are STABLE between samples are
+    # kept: `threshold_secs` (soonest idle→AFK rule threshold, scene override applied; None =
+    # nothing will auto-set AFK) and the snooze window turned into an ABSOLUTE deadline so a
+    # stale sample can't lie about how much is left. `idle_secs`/`afk_in_secs` change every
+    # second by design and are deliberately not mirrored — poll /api/afk for a live countdown.
+    afk_threshold_secs: int | None = None
+    afk_snooze_until_ms: int | None = None
+
+    @property
+    def watched_app_active(self) -> bool:
+        """A watched app is in play (foreground OR running)."""
+        return self.watched_focused or self.watched_running
 
 
 _TWITCH_KEYS = (
@@ -67,17 +106,91 @@ _TWITCH_KEYS = (
     "started_at_ms",
 )
 
+# The now-playing fields we surface. `position_ms`/`updated_at_ms` are deliberately dropped:
+# `spotify_now_playing` is re-emitted on position drift, so mirroring them would rewrite the
+# sensor (and its recorder history) every few seconds for no visible change.
+_SPOTIFY_KEYS = (
+    "playing",
+    "title",
+    "artist",
+    "featuring",
+    "album",
+    "playlist",
+    "playlist_url",
+    "art_url",
+    "url",
+    "up_next_title",
+    "up_next_artist",
+    "duration_ms",
+)
 
-def _state_from_snapshot(raw: dict[str, Any]) -> SwitchboardData:
+
+def _spotify_view(now: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Trim a NowPlaying payload to the fields we expose (see `_SPOTIFY_KEYS`)."""
+    if not now:
+        return None
+    return {k: now.get(k) for k in _SPOTIFY_KEYS}
+
+
+def _spotify_gate(now: dict[str, Any] | None) -> str:
+    """`now is None` means nothing is playing (the app's SpotifyNowPlaying contract) → the gate
+    is "stopped", not "paused". A present-but-not-playing track is paused."""
+    if not now:
+        return SPOTIFY_STOPPED
+    return SPOTIFY_PLAYING if now.get("playing") else SPOTIFY_PAUSED
+
+
+def _obs_from_snapshot(o: dict[str, Any]) -> dict[str, Any]:
+    """One `ApiState.obs[]` entry → our per-instance fields. `scenes` has no snapshot field
+    (only the `obs_scenes_changed` event carries it), so it starts empty and fills in live."""
+    return {
+        "label": o.get("label", o["id"]),
+        "connected": o.get("connected", False),
+        "streaming": o.get("streaming", False),
+        "recording": o.get("recording", False),
+        "current_scene": o.get("current_scene"),
+        "stream_started_ms": o.get("stream_started_ms"),
+        "stream_delay_secs": o.get("stream_delay_secs"),
+        "scenes": [],
+    }
+
+
+def _apply_afk(data: SwitchboardData, raw: dict[str, Any]) -> bool:
+    """Fold a `GET /api/afk` payload into `data`. Returns True when something we expose moved.
+
+    `snooze_secs` is a countdown, so it is stored as an absolute deadline: a sample taken two
+    minutes ago then still reads correctly instead of claiming a window that already elapsed.
+    """
+    threshold = raw.get("threshold_secs")
+    threshold = None if threshold is None else int(threshold)
+    snooze = raw.get("snooze_secs")
+    until = None if snooze is None else int(time.time() * 1000) + int(snooze) * 1000
+
+    changed = threshold != data.afk_threshold_secs
+    data.afk_threshold_secs = threshold
+
+    was = data.afk_snooze_until_ms
+    if (until is None) != (was is None):
+        data.afk_snooze_until_ms = until
+        changed = True
+    elif until is not None and was is not None and abs(until - was) > 2000:
+        # Deadlines drift by the request round-trip; only a >2 s move is a real re-snooze, so
+        # resampling an unchanged window doesn't rewrite the entity.
+        data.afk_snooze_until_ms = until
+        changed = True
+    return changed
+
+
+def _state_from_snapshot(
+    raw: dict[str, Any], previous: SwitchboardData | None = None
+) -> SwitchboardData:
     obs: dict[str, dict[str, Any]] = {}
     for o in raw.get("obs", []):
-        obs[o["id"]] = {
-            "label": o.get("label", o["id"]),
-            "connected": o.get("connected", False),
-            "streaming": o.get("streaming", False),
-            "recording": o.get("recording", False),
-            "current_scene": o.get("current_scene"),
-        }
+        inst = _obs_from_snapshot(o)
+        # Carry the live-only scene list across a resync so it doesn't blank on every reconnect.
+        if previous and (old := previous.obs.get(o["id"])):
+            inst["scenes"] = old.get("scenes") or []
+        obs[o["id"]] = inst
     twitch: dict[str, dict[str, Any]] = {}
     for tw in raw.get("twitch", []):
         twitch[tw["id"]] = {k: tw.get(k) for k in _TWITCH_KEYS}
@@ -85,13 +198,20 @@ def _state_from_snapshot(raw: dict[str, Any]) -> SwitchboardData:
     return SwitchboardData(
         obs=obs,
         spotify=raw.get("spotify", SPOTIFY_STOPPED),
-        spotify_now=raw.get("spotify_now"),
-        afk=raw.get("afk", False),
+        spotify_now=_spotify_view(raw.get("spotify_now")),
+        # `afk` and `machine_state` mirror each other server-side; prefer the explicit string
+        # when present so the two can never be read inconsistently.
+        afk=(raw["machine_state"] == "afk") if "machine_state" in raw else raw.get("afk", False),
         twitch=twitch,
         version=raw.get("version", ""),
         update=raw.get("update"),
         focused_app=apps.get("focused"),
-        watched_app_active=bool(apps.get("watched_focused") or apps.get("watched_running")),
+        running_apps=list(apps.get("running") or []),
+        watched_focused=bool(apps.get("watched_focused")),
+        watched_running=bool(apps.get("watched_running")),
+        # Preserved across a resync — /api/state doesn't carry them, /api/afk does.
+        afk_threshold_secs=previous.afk_threshold_secs if previous else None,
+        afk_snooze_until_ms=previous.afk_snooze_until_ms if previous else None,
     )
 
 
@@ -112,6 +232,8 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         self._ws_task: asyncio.Task[None] | None = None
         self._refreshing = False
         self._refresh_again = False
+        self._afk_task: asyncio.Task[None] | None = None
+        self._afk_again = False
         # Once-per-outage log gates — reset after a fully successful connect (ws + resync).
         self._access_denied_logged = False
         self._reauth_logged = False
@@ -122,7 +244,14 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             raw = await self.client.fetch_state()
         except SwitchboardApiError as err:
             raise UpdateFailed(str(err)) from err
-        return _state_from_snapshot(raw)
+        data = _state_from_snapshot(raw, self.data)
+        try:
+            _apply_afk(data, await self.client.fetch_afk())
+        except SwitchboardApiError as err:
+            # Never fail setup on the AFK extras — they are attributes on an entity whose main
+            # state came from /api/state, which already succeeded.
+            _LOGGER.debug("switchboard: /api/afk unavailable: %s", err)
+        return data
 
     async def async_start(self) -> None:
         """Launch the events websocket as a background task."""
@@ -136,20 +265,42 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         if self._ws_task:
             self._ws_task.cancel()
             self._ws_task = None
+        if self._afk_task:
+            self._afk_task.cancel()
+            self._afk_task = None
 
     # --- connection lookup (used by services) ------------------------------------------------
 
+    def _ids(self, integration: str) -> set[str]:
+        return {c["id"] for c in self.connections if c.get("integration") == integration}
+
     def obs_ids(self) -> set[str]:
-        return {c["id"] for c in self.connections if c["integration"] == "obs"}
+        return self._ids("obs")
 
     def twitch_ids(self) -> set[str]:
-        return {c["id"] for c in self.connections if c["integration"] == "twitch"}
+        return self._ids("twitch")
+
+    def ha_ids(self) -> set[str]:
+        """Downstream Home Assistant connections *of the Switchboard app* — the target of the
+        `ha_service_call` / `ha_light_flash` actions (not this integration's own HA)."""
+        return self._ids("home_assistant")
 
     def connection_label(self, connection_id: str) -> str:
         for c in self.connections:
             if c["id"] == connection_id:
                 return c.get("label", connection_id)
         return connection_id
+
+    def default_id(self, integration: str) -> str | None:
+        """The default connection for an integration — or the only one, which the app treats as
+        the implicit default. None when there are several and none is flagged."""
+        candidates = [c for c in self.connections if c.get("integration") == integration]
+        if len(candidates) == 1:
+            return candidates[0]["id"]
+        for c in candidates:
+            if c.get("is_default"):
+                return c["id"]
+        return None
 
     def resolve_connection_id(self, target: str, integration: str | None = None) -> str | None:
         """Accept either a raw id or a friendly label; return the id.
@@ -164,7 +315,8 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         matches = [
             c
             for c in self.connections
-            if c["label"] == target and (integration is None or c["integration"] == integration)
+            if c.get("label") == target
+            and (integration is None or c.get("integration") == integration)
         ]
         if len(matches) == 1:
             return matches[0]["id"]
@@ -260,8 +412,15 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         """
         new_conns = await self.client.fetch_connections()
         raw = await self.client.fetch_state()
+        data = _state_from_snapshot(raw, self.data)
+        try:
+            _apply_afk(data, await self.client.fetch_afk())
+        except SwitchboardApiError as err:
+            # Best-effort extras: a missing /api/afk must not force a reconnect loop when the
+            # snapshot itself came through fine.
+            _LOGGER.debug("switchboard: /api/afk unavailable: %s", err)
         self._replace_connections(new_conns)
-        self.async_set_updated_data(_state_from_snapshot(raw))
+        self.async_set_updated_data(data)
 
     @callback
     def _handle_frame(self, frame: dict[str, Any]) -> None:
@@ -276,35 +435,65 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         data = self.data
         etype = frame.get("type")
 
+        # `connections_changed`, `update_available` and `update_ready` are classified INTERNAL in
+        # the app (events.rs `ha_contract::INTERNAL_EVENTS`) — the bus ships them to every
+        # consumer, but the contract doesn't guarantee them. We use them as live *hints* only:
+        # every value they touch is also carried by /api/state, which is re-fetched on every
+        # reconnect, so dropping them would cost freshness, never correctness.
         if etype == "connections_changed":
             # Connection set may have changed → refresh list + snapshot, reload if entities differ.
             self.hass.async_create_task(self._refresh_connections())
             return False
 
         cid = frame.get("connection_id")
-        if etype in ("obs_scene_changed", "obs_connection", "obs_stream_state", "obs_record_state"):
+        if etype in _OBS_EVENTS:
             inst = data.obs.get(cid)
             if inst is None:
                 return False  # unknown connection; a connections_changed/reload will add it
             if etype == "obs_scene_changed":
                 inst["current_scene"] = frame.get("scene")
+                # A per-scene AFK override on the default instance's live scene REPLACES the
+                # rule threshold while that scene is up (docs/HA.md "AFK numbers") — resample.
+                self.schedule_afk_refresh()
             elif etype == "obs_connection":
                 inst["connected"] = bool(frame.get("connected"))
             elif etype == "obs_stream_state":
-                inst["streaming"] = bool(frame.get("active"))
+                active = bool(frame.get("active"))
+                # The event carries no start timestamp; derive it on the off→on edge (the next
+                # resync replaces it with the authoritative `stream_started_ms`).
+                if active and not inst.get("streaming"):
+                    inst["stream_started_ms"] = int(time.time() * 1000)
+                elif not active:
+                    inst["stream_started_ms"] = None
+                inst["streaming"] = active
             elif etype == "obs_record_state":
                 inst["recording"] = bool(frame.get("active"))
+            elif etype == "obs_scenes_changed":
+                inst["scenes"] = list(frame.get("scenes") or [])
+            elif etype == "obs_delay_changed":
+                inst["stream_delay_secs"] = frame.get("secs")  # None = delay off
+            elif etype == "stream_delay_changed":
+                # A scene change flipped the delay on this instance.
+                inst["stream_delay_secs"] = frame.get("seconds") if frame.get("enabled") else None
             return True
 
         if etype == "machine_state_changed":
             data.afk = frame.get("state") == "afk"
+            # An explicit active/afk flip can consume or moot a snooze window — resample.
+            self.schedule_afk_refresh()
             return True
 
         if etype == "app_detect_changed":
             data.focused_app = frame.get("focused")
-            data.watched_app_active = bool(
-                frame.get("watched_focused") or frame.get("watched_running")
-            )
+            data.running_apps = list(frame.get("running") or [])
+            data.watched_focused = bool(frame.get("watched_focused"))
+            data.watched_running = bool(frame.get("watched_running"))
+            return True
+
+        if etype == "twitch_category_updated":
+            inst = data.twitch.setdefault(cid, {})
+            inst["category_id"] = frame.get("game_id")
+            inst["category_name"] = frame.get("game_name")
             return True
 
         if etype == "twitch_stream_status":
@@ -341,31 +530,63 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             }
             return True
 
-        if etype in (
-            "spotify_song_changed",
-            "spotify_playlist_changed",
-            "spotify_playback_started",
-            "spotify_now_playing",
-        ):
-            now = frame.get("now")
-            data.spotify_now = now
-            # `now is None` means nothing is playing (per the app's SpotifyNowPlaying contract) →
-            # the gate is "stopped", not "paused". A present-but-not-playing track is paused.
-            if now is None:
-                data.spotify = SPOTIFY_STOPPED
-            else:
-                data.spotify = SPOTIFY_PLAYING if now.get("playing") else SPOTIFY_PAUSED
-            return True
+        if etype in _SPOTIFY_TRACK_EVENTS:
+            return self._set_spotify(frame.get("now"), _spotify_gate(frame.get("now")))
         if etype == "spotify_playback_paused":
-            data.spotify_now = frame.get("now")
-            data.spotify = SPOTIFY_PAUSED
-            return True
+            return self._set_spotify(frame.get("now"), SPOTIFY_PAUSED)
         if etype == "spotify_playback_stopped":
-            data.spotify_now = None
-            data.spotify = SPOTIFY_STOPPED
-            return True
+            # No payload on this one (docs/HA.md field notes) — nothing is playing.
+            return self._set_spotify(None, SPOTIFY_STOPPED)
 
+        # Everything else on the contract's event list (home_assistant_*, overlay_alert,
+        # peer_lifecycle/peer_reachability, rule_fired, the rule_action_* trio,
+        # rule_events_dropped, external_command, opendeck_*, twitch_event, navigate_to_view,
+        # obs_reconnecting, obs_launched_local, mesh_identity_reset, plugin_paired/removed)
+        # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
         return False
+
+    @callback
+    def _set_spotify(self, now: dict[str, Any] | None, gate: str) -> bool:
+        """Store a now-playing payload + gate. Returns True only when something we EXPOSE
+        changed: `spotify_now_playing` is re-emitted on position drift, so patching blindly
+        would rewrite the sensor (and its history) every few seconds for no visible change."""
+        view = _spotify_view(now)
+        if view == self.data.spotify_now and gate == self.data.spotify:
+            return False
+        self.data.spotify_now = view
+        self.data.spotify = gate
+        return True
+
+    @callback
+    def schedule_afk_refresh(self) -> None:
+        """Resample `GET /api/afk` soon, coalescing bursts into one request.
+
+        Called when something that can move `threshold_secs`/`snooze_secs` happened (scene
+        change, machine-state flip, one of our own AFK service calls). There is no clock: the
+        live `idle_secs` countdown is not mirrored (see `SwitchboardData`).
+        """
+        if self._closing:
+            return
+        if self._afk_task and not self._afk_task.done():
+            self._afk_again = True
+            return
+        self._afk_task = self.hass.async_create_task(self._refresh_afk())
+
+    async def _refresh_afk(self) -> None:
+        while True:
+            self._afk_again = False
+            await asyncio.sleep(AFK_COALESCE_SECS)
+            if self._closing:
+                return
+            try:
+                raw = await self.client.fetch_afk()
+            except SwitchboardApiError as err:
+                _LOGGER.debug("switchboard: /api/afk refresh failed: %s", err)
+                return
+            if _apply_afk(self.data, raw):
+                self.async_set_updated_data(self.data)
+            if not self._afk_again:
+                return
 
     def _entity_shape(self) -> set[tuple[str, str]]:
         """(id, label) of every connection that backs entities — labels included so a rename

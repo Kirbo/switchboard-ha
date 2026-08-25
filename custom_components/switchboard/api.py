@@ -1,8 +1,8 @@
 """Thin async client for the Switchboard external API (TLS port 38474).
 
-Contract: docs/HA.md in the Switchboard repo. Three read endpoints we use here
-(`GET /api/state`, `GET /api/connections`, `GET /api/events/ws`) sit behind the Events
-ACL; `POST /api/command` behind the Control ACL. One bearer token gates all of them.
+Contract: docs/HA.md in the Switchboard repo. Four read endpoints we use here
+(`GET /api/state`, `GET /api/connections`, `GET /api/afk`, `GET /api/events/ws`) sit behind
+the Events ACL; `POST /api/command` behind the Control ACL. One bearer token gates all of them.
 
 TLS is self-signed (the same cert the peer mesh pins), so verification is one of:
 - pin the SHA-256 fingerprint (aiohttp.Fingerprint) — recommended,
@@ -101,6 +101,16 @@ class SwitchboardClient:
     async def fetch_connections(self) -> list[dict[str, Any]]:
         """Every connection: [{id, integration, label, is_default, enabled, ...}]."""
         return await self._get("/api/connections")
+
+    async def fetch_afk(self) -> dict[str, Any]:
+        """Live idle/AFK-countdown numbers (docs/HA.md "AFK numbers"):
+        {afk, idle_secs, threshold_secs, snooze_secs, afk_in_secs} — every number nullable.
+
+        A poll endpoint by design (the idle clock resets on every keystroke, so it is never
+        pushed as events). We sample it at the few moments the *stable* numbers can change
+        rather than running a clock — see the coordinator.
+        """
+        return await self._get("/api/afk")
 
     async def send_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST /api/command — run one rule action. Returns {ok, acted}."""
