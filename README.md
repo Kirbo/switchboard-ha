@@ -9,20 +9,25 @@ It consumes Switchboard's **External API** (the same authenticated surface docum
 entities, and lets HA drive Switchboard actions through services.
 
 > **Local push.** State arrives over a long-lived websocket — no polling. The integration fetches a
-> snapshot once on connect, then stays live from the event stream.
+> snapshot on every (re)connect, then stays live from the event stream.
 
 ## What you get
 
 **Entities** (one device per OBS / Twitch connection, plus a Switchboard service device):
 
-- **Binary sensors** — per OBS connection: `connected`, `streaming`, `recording`; per Twitch
-  connection: `Live`; global: `AFK`, `Watched app active` (app-detection — a watched app is
-  focused/running), `Update available`.
-- **Sensors** — per OBS connection: current `Scene`; per Twitch connection: `Viewers`, `Chatters`,
-  `Category` (with box-art URL + title attributes); global: `Spotify` playback
-  (`playing`/`paused`/`stopped`) with now-playing attributes (title, artist, album, art_url, …),
-  `Focused app` (the in-play app id from app-detection), and `Version` (with any pending-update
-  attributes).
+- **Binary sensors** — per OBS connection: `Connected`, `Streaming`, `Recording`; per Twitch
+  connection: `Live`; global: `AFK` (attributes: `threshold_secs` — how long idle before the
+  idle→AFK automation fires, with any per-scene override applied, `null` = never — and
+  `snooze_until`), `Watched app active` (app-detection — a watched app is focused *or* running),
+  `Update available`.
+- **Sensors** — per OBS connection: current `Scene` (attribute: that instance's `scenes` list),
+  `Stream started` (timestamp — derive uptime from it) and `Stream delay` (seconds, `0` = off);
+  per Twitch connection: `Viewers`, `Chatters`, `Category` (attributes: category id, box-art URL,
+  title, `started_at_ms`) and `Live since` (timestamp); global: `Spotify` playback
+  (`playing`/`paused`/`stopped`) with now-playing attributes (title, artist, featuring, album,
+  playlist, playlist URL, art URL, up-next track, duration), `Focused app` (attributes: the
+  `running` watch-list ids plus the separate `watched_focused` / `watched_running` flags), and
+  `Version` (with any pending-update attributes).
 
 **Services** (→ `POST /api/command`):
 
@@ -33,14 +38,25 @@ entities, and lets HA drive Switchboard actions through services.
 - `switchboard.set_machine_state` — set Switchboard's machine state (`afk` / `active`), e.g. from an
   HA presence automation; fires Switchboard's `machine_state_*` triggers so it runs its own AFK
   automations (and flips back to active on input).
+- `switchboard.afk_snooze` — hold off the idle→AFK automation for N seconds (mid-cutscene guard).
+  Repeated calls stack (capped at 4 h); `0` cancels.
+- `switchboard.afk_reset_idle` — "I'm still here": reset Switchboard's idle clock without
+  synthesizing input.
+- `switchboard.light_flash` — blink a light or light group N times in a colour through
+  *Switchboard's own* downstream Home Assistant connection, then restore its previous state.
+  Like every `ha_*` action this needs the **global** External API token, not a paired-plugin one.
 
 `target` accepts a friendly connection **label** or its **id** (anything that isn't a known
 connection — e.g. the `spotify` sentinel — is passed through unchanged). Every service also takes an
 optional `entry_id` to address a specific instance when several Switchboard machines are configured
 (leave blank with a single instance).
 
-**Bus event** — every Switchboard event is re-fired as `switchboard_event` (with its raw `type` and
-fields), so you can trigger HA automations on `twitch_event`, `rule_fired`, `obs_scene_changed`, etc.
+**Bus event** — **every** Switchboard event is re-fired as `switchboard_event` (with its raw `type`
+and fields), including the ones that back no entity: `twitch_event` (follows/subs/raids/cheers),
+`rule_fired`, the peer-action queue trio `rule_action_queued` / `_delivered` / `_failed`,
+`rule_events_dropped`, `peer_lifecycle` / `peer_reachability`, `overlay_alert`,
+`home_assistant_state_changed` (Switchboard's *own* watched HA entities), `external_command`,
+`opendeck_event`, `mesh_identity_reset`, and the rest of the contract's event vocabulary.
 
 ```yaml
 automation:
@@ -89,13 +105,41 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 | **Verify TLS certificate** | Leave **off** for the self-signed cert (default) unless you front it with a trusted certificate. |
 | **TLS fingerprint** | *Optional, recommended.* SHA-256 fingerprint to pin (shown on Switchboard's Peers tab) — pins the self-signed cert instead of skipping verification. |
 
+> **Token kind.** Paste the **global** External API token (Settings → External API). The per-plugin
+> token from Switchboard's pairing Grant flow also authenticates, but it is scope-limited: the
+> `ha_*` actions behind `switchboard.light_flash` are global-token-only, so pairing would give you
+> a strictly weaker integration. There is deliberately no pairing step in this config flow.
+
 ## Notes
 
 - The API event/command schema is **additive**: new event types and fields appear over time and are
-  ignored if unknown. New OBS connections added in Switchboard trigger a reload so their entities
-  appear.
+  ignored if unknown. New OBS/Twitch connections added (or renamed) in Switchboard trigger a reload
+  so their entities and device names follow.
+- A few numbers are derived locally rather than streamed, exactly as the contract prescribes:
+  **stream/live uptime** comes from the `Stream started` / `Live since` timestamps, and album/box
+  art is loaded from the `art_url` / `box_art_url` attributes (the app broadcasts URLs, never
+  images).
+- The live AFK **countdown** (`idle_secs` / `afk_in_secs`) is not mirrored into an entity — it
+  changes every second and would rewrite the sensor's history once a second. The AFK binary sensor
+  carries the stable halves (`threshold_secs`, `snooze_until`); poll `GET /api/afk` yourself if you
+  want a ticking countdown.
 - This integration lives in its own repo (not the Switchboard monorepo) because HACS only installs
   from GitHub. The API contract it targets is documented in the app's `docs/HA.md`.
+
+## Development
+
+The toolchain is pinned in `mise.toml` ([mise](https://mise.jdx.dev/)); Home Assistant itself is a
+pip package, provisioned into `.venv` by the test task.
+
+```bash
+mise install
+mise run lint   # ruff check + format --check
+mise run test   # pytest against a real Home Assistant (provisions .venv first)
+```
+
+`tests/test_contract.py` mirrors the app contract's **Full event reference** and `/api/state`
+example frame-for-frame: when `docs/HA.md` gains or renames something, update that file first and
+let the suite point at everything downstream that still reads the old shape.
 
 ## Related
 
