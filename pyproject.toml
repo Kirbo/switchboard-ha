@@ -1,3 +1,13 @@
+[tool.pytest.ini_options]
+# `pytest-homeassistant-custom-component` supplies async fixtures (`hass`, `enable_custom_
+# integrations`, …) with no markers, so coroutine tests must be collected automatically.
+asyncio_mode = "auto"
+testpaths = ["tests"]
+norecursedirs = [".git", ".venv", "custom_components"]
+# The suite must stay warning-clean; HA's own deprecation shims are the canary for an API we
+# should have migrated off.
+filterwarnings = ["error::DeprecationWarning:homeassistant.*"]
+
 [tool.ruff]
 target-version = "py312"  # oldest Python the HA minimum (2025.1) still supports
 line-length = 100
@@ -9,3 +19,8 @@ select = ["E", "F", "W", "I", "UP", "B"]
 force-sort-within-sections = true
 known-first-party = ["custom_components.switchboard"]
 combine-as-imports = true
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately reach into the coordinator's private patch path — that IS the unit under
+# test (the app-side contract guard does the same against `events.rs`).
+"tests/*" = ["SLF001"]

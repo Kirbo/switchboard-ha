@@ -3,5 +3,7 @@ __pycache__/
 .venv/
 venv/
 .mypy_cache/
+.pytest_cache/
 .ruff_cache/
+.coverage
 .DS_Store

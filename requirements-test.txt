@@ -1,0 +1,7 @@
+# Test-only dependencies. The integration itself ships no `requirements` (manifest.json) — it
+# talks to Switchboard with aiohttp, which Home Assistant already provides.
+#
+# `pytest-homeassistant-custom-component` pins the Home Assistant version it mirrors (and pytest
+# with it), so bump this one line to test against a newer HA. It needs Python >= 3.14.2 for
+# HA 2026.6+; see mise.toml.
+pytest-homeassistant-custom-component==0.13.357
