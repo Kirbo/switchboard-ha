@@ -87,7 +87,16 @@ class SpotifySensor(SwitchboardHubEntity, SensorEntity):
             return {}
         return {
             k: now.get(k)
-            for k in ("title", "artist", "album", "playlist", "url", "art_url")
+            for k in (
+                "title",
+                "artist",
+                "album",
+                "playlist",
+                "url",
+                "art_url",
+                "up_next_title",
+                "up_next_artist",
+            )
             if now.get(k)
         }
 
