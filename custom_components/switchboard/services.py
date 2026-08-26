@@ -2,7 +2,8 @@
 
 A generic `run_action` passthrough (forward-compatible with the additive action list in
 docs/HA.md) plus typed conveniences for the actions worth a proper UI: `obs_scene_set`,
-`overlay_alert_show`, `machine_state_set`, `ha_light_flash`, `afk_snooze`, `afk_reset_idle`.
+`twitch_go_live`, `overlay_alert_show`, `machine_state_set`, `ha_light_flash`, `afk_snooze`,
+`afk_reset_idle`.
 `ha_light_flash` (like `ha_service_call` and `discord_webhook_send`) requires the **global**
 External API token — a scope-limited plugin token cannot call it.
 
@@ -26,6 +27,7 @@ from .const import DOMAIN
 
 SERVICE_RUN_ACTION = "run_action"
 SERVICE_OBS_SCENE_SET = "obs_scene_set"
+SERVICE_GO_LIVE = "go_live"
 SERVICE_OVERLAY_ALERT = "overlay_alert"
 SERVICE_SET_MACHINE_STATE = "set_machine_state"
 SERVICE_LIGHT_FLASH = "light_flash"
@@ -34,6 +36,8 @@ SERVICE_AFK_RESET_IDLE = "afk_reset_idle"
 
 ATTR_ACTION_TYPE = "action_type"
 ATTR_TARGET = "target"
+ATTR_ACCOUNT_ID = "account_id"
+ATTR_OBS_ID = "obs_id"
 ATTR_VALUE = "value"
 ATTR_ACTION_PARAMS = "action_params"
 ATTR_SCENE = "scene"
@@ -68,6 +72,17 @@ OBS_SCENE_SET_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_TARGET): cv.string,
         vol.Required(ATTR_SCENE): cv.string,
+        **_ENTRY_FIELD,
+    }
+)
+
+# `twitch_go_live` — composite (docs/HA.md Commands): fetch the account's stream key, set it on
+# the target OBS AND start its stream as one operation, then make the account Switchboard's
+# default. The key itself never rides any request/response/event — this payload is ids only.
+GO_LIVE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ACCOUNT_ID): cv.string,
+        vol.Optional(ATTR_OBS_ID, default=""): cv.string,
         **_ENTRY_FIELD,
     }
 )
@@ -187,6 +202,24 @@ def async_register_services(hass: HomeAssistant) -> None:
             },
         )
 
+    async def handle_go_live(call: ServiceCall) -> None:
+        coord, account_id = _pick(hass, call.data[ATTR_ACCOUNT_ID], call.data[ATTR_ENTRY_ID])
+        payload: dict[str, Any] = {
+            "action_type": "twitch_go_live",
+            "target_connection_id": account_id,
+            "value": "",
+        }
+        if obs := call.data[ATTR_OBS_ID]:
+            # Label-or-id like every other target; an unknown value passes through unchanged for
+            # the app to validate. Omitted entirely → no action_params, so the app resolves its
+            # default local OBS (docs/HA.md: both target keys absent = the default local OBS).
+            try:
+                resolved = coord.resolve_connection_id(obs, "obs")
+            except ValueError as err:
+                raise HomeAssistantError(str(err)) from err
+            payload["action_params"] = {"obs_id": resolved or obs}
+        await _send(coord, payload)
+
     async def handle_overlay_alert(call: ServiceCall) -> None:
         coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
         await _send(
@@ -245,6 +278,7 @@ def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_OBS_SCENE_SET, handle_obs_scene_set, schema=OBS_SCENE_SET_SCHEMA
     )
+    hass.services.async_register(DOMAIN, SERVICE_GO_LIVE, handle_go_live, schema=GO_LIVE_SCHEMA)
     hass.services.async_register(
         DOMAIN, SERVICE_OVERLAY_ALERT, handle_overlay_alert, schema=OVERLAY_ALERT_SCHEMA
     )

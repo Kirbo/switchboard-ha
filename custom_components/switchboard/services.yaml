@@ -41,6 +41,24 @@ obs_scene_set:
         config_entry:
           integration: switchboard
 
+go_live:
+  fields:
+    account_id:
+      required: true
+      example: Main
+      selector:
+        text:
+    obs_id:
+      required: false
+      example: Home OBS
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
+
 overlay_alert:
   fields:
     text:

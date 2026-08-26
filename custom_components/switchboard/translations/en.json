@@ -96,6 +96,24 @@
         }
       }
     },
+    "go_live": {
+      "name": "Go live",
+      "description": "Fetch a Twitch account's stream key, set it on the target OBS and start its stream as one operation, then make that account Switchboard's default. Needs the twitch_control scope — a 403 means the token lacks it (grant the scope to the paired plugin, or use the global External API token).",
+      "fields": {
+        "account_id": {
+          "name": "Twitch account",
+          "description": "Twitch connection label or id — an account on the Switchboard machine running the command (it owns the stream key)."
+        },
+        "obs_id": {
+          "name": "OBS connection",
+          "description": "OBS connection label or id the stream key is delivered to. Leave blank for Switchboard's default OBS connection."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
     "overlay_alert": {
       "name": "Show overlay alert",
       "description": "Show an alert on the Switchboard alerts overlay.",

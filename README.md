@@ -34,6 +34,16 @@ entities, and lets HA drive Switchboard actions through services.
 - `switchboard.run_action` — generic passthrough for **any** action (`action_type`, `target`,
   `value`, `action_params`); forward-compatible with new Switchboard actions.
 - `switchboard.obs_scene_set` — switch an OBS connection's program scene.
+- `switchboard.go_live` — Twitch **go-live composite**: fetches the account's stream key, sets it
+  on the target OBS **and starts its stream** as one operation, then makes that account
+  Switchboard's default. `account_id` is the Twitch connection (an account on the Switchboard
+  machine — it owns the key); `obs_id` optionally picks the OBS connection the key is delivered
+  to (blank = Switchboard's default OBS). The stream key itself never appears in any request,
+  response or event — the payload is ids only. Needs a token with the **`twitch_control`** scope:
+  the global External API token always has it, so a `403` means a paired-plugin token without the
+  scope — grant `twitch_control` to that plugin in Switchboard, or use the global token. After
+  the stream stops, Switchboard auto-restores the OBS stream settings and fires
+  `twitch_stream_target_restored`.
 - `switchboard.overlay_alert` — show an alert on the Switchboard alerts overlay.
 - `switchboard.set_machine_state` — set Switchboard's machine state (`afk` / `active`), e.g. from an
   HA presence automation; fires Switchboard's `machine_state_*` triggers so it runs its own AFK
@@ -56,7 +66,8 @@ and fields), including the ones that back no entity: `twitch_event` (follows/sub
 `rule_fired`, the peer-action queue trio `rule_action_queued` / `_delivered` / `_failed`,
 `rule_events_dropped`, `peer_lifecycle` / `peer_reachability`, `overlay_alert`,
 `home_assistant_state_changed` (Switchboard's *own* watched HA entities), `external_command`,
-`opendeck_event`, `mesh_identity_reset`, and the rest of the contract's event vocabulary.
+`opendeck_event`, `mesh_identity_reset`, the go-live pair `twitch_go_live` /
+`twitch_stream_target_restored`, and the rest of the contract's event vocabulary.
 
 ```yaml
 automation:

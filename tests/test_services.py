@@ -13,6 +13,7 @@ from .test_entities import _setup
 
 HA_CONN = "33333333-3333-3333-3333-333333333333"
 OBS_CONN = "11111111-1111-1111-1111-111111111111"
+TWITCH_CONN = "22222222-2222-2222-2222-222222222222"
 
 
 def _client(hass: HomeAssistant, entry_id: str):
@@ -30,6 +31,31 @@ async def test_obs_scene_set_resolves_a_label(hass: HomeAssistant) -> None:
         "action_type": "obs_scene_set",
         "target_connection_id": OBS_CONN,
         "value": "BRB",
+    }
+
+
+async def test_go_live_resolves_labels_for_account_and_obs(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    await _call(hass, "go_live", {"account_id": "Main", "obs_id": "Home OBS"})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "twitch_go_live",
+        "target_connection_id": TWITCH_CONN,
+        "value": "",
+        "action_params": {"obs_id": OBS_CONN},
+    }
+
+
+async def test_go_live_omits_action_params_so_the_app_default_obs_applies(
+    hass: HomeAssistant,
+) -> None:
+    """No `obs_id` → no `action_params` at all: both target keys absent means the app resolves
+    its default local OBS (docs/HA.md Commands, `twitch_go_live` row)."""
+    entry = await _setup(hass)
+    await _call(hass, "go_live", {"account_id": TWITCH_CONN})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "twitch_go_live",
+        "target_connection_id": TWITCH_CONN,
+        "value": "",
     }
 
 

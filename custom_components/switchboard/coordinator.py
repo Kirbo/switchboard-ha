@@ -540,8 +540,9 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
         # Everything else on the contract's event list (home_assistant_*, overlay_alert,
         # peer_lifecycle/peer_reachability, rule_fired, the rule_action_* trio,
-        # rule_events_dropped, external_command, opendeck_*, twitch_event, navigate_to_view,
-        # obs_reconnecting, obs_launched_local, mesh_identity_reset, plugin_paired/removed)
+        # rule_events_dropped, external_command, opendeck_*, twitch_event, twitch_go_live,
+        # twitch_stream_target_restored, navigate_to_view, obs_reconnecting, obs_scene_renamed,
+        # obs_launched_local, mesh_identity_reset, plugin_paired/removed)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
         return False
 
