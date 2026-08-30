@@ -66,6 +66,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     {"type": "machine_state_changed", "state": "afk", "source": "External API"},
     {"type": "variable_changed", "name": "deaths", "value": "5"},
     {"type": "overlay_countdown", "ends_at_ms": 1700000000000, "label": "Starting soon"},
+    {"type": "hotkey_pressed", "combo": "KEY_LEFTCTRL+KEY_M"},
     {"type": "obs_disk_space", "connection_id": CID, "free_mb": 12698, "low": True},
     {
         "type": "twitch_clip_created",

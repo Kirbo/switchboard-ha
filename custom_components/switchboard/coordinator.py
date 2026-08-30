@@ -546,7 +546,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # plugin_paired/removed,
         # spotify_song_liked/spotify_playlist_track_added, insights_session_ended,
         # variable_changed, obs_input_mute_changed, twitch_clip_created, obs_disk_space,
-        # overlay_countdown)
+        # overlay_countdown, hotkey_pressed)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
         #
         # The two Spotify like/playlist events deliberately DON'T touch the Spotify sensor: they
@@ -566,6 +566,9 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # twitch_clip_created is a one-shot: a clip was just cut, and its links (`url` once Twitch
         # finishes processing, `edit_url` immediately) are what an automation wants to post. It is
         # not state, so no entity.
+        #
+        # hotkey_pressed says a bound global hotkey was pressed. Momentary by definition, so no
+        # entity; automate on the event if you want a keystroke on this machine to drive HA.
         #
         # overlay_countdown says the countdown overlay's target moved (or was cleared). The timer
         # runs in the overlay page, not here, so there is no state to hold — and a sensor counting
