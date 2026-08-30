@@ -66,6 +66,14 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     {"type": "machine_state_changed", "state": "afk", "source": "External API"},
     {"type": "variable_changed", "name": "deaths", "value": "5"},
     {
+        "type": "twitch_clip_created",
+        "connection_id": CID,
+        "clip_id": "SomeClipSlug",
+        "url": "https://clips.twitch.tv/SomeClipSlug",
+        "edit_url": "https://clips.twitch.tv/SomeClipSlug/edit",
+        "source": "OpenDeck",
+    },
+    {
         "type": "obs_input_mute_changed",
         "connection_id": CID,
         "input": "Mic/Aux",
