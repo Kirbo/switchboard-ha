@@ -66,6 +66,12 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     {"type": "machine_state_changed", "state": "afk", "source": "External API"},
     {"type": "variable_changed", "name": "deaths", "value": "5"},
     {
+        "type": "obs_input_mute_changed",
+        "connection_id": CID,
+        "input": "Mic/Aux",
+        "muted": True,
+    },
+    {
         "type": "app_detect_changed",
         "focused": "steam_app_599140",
         "watched_focused": True,
