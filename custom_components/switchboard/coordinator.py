@@ -542,8 +542,15 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # peer_lifecycle/peer_reachability, rule_fired, the rule_action_* trio,
         # rule_events_dropped, external_command, opendeck_*, twitch_event, twitch_go_live,
         # twitch_stream_target_restored, navigate_to_view, obs_reconnecting, obs_scene_renamed,
-        # obs_launched_local, mesh_identity_reset, plugin_paired/removed)
+        # obs_launched_local, mesh_identity_reset, plugin_paired/removed,
+        # spotify_song_liked/spotify_playlist_track_added)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
+        #
+        # The two Spotify like/playlist events deliberately DON'T touch the Spotify sensor: they
+        # carry no now-playing snapshot (the liked track may already have moved on by the time the
+        # frame arrives), and they are momentary actions rather than state. Automate on them with
+        # `event_type: switchboard_event` + `event_data.type`, branching on the `liked`/`added`
+        # boolean, which carries the direction.
         return False
 
     @callback
