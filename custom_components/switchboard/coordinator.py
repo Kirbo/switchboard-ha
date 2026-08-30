@@ -544,7 +544,8 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # twitch_stream_target_restored, navigate_to_view, obs_reconnecting, obs_scene_renamed,
         # obs_launched_local, obs_stream_health, twitch_chat_command, mesh_identity_reset,
         # plugin_paired/removed,
-        # spotify_song_liked/spotify_playlist_track_added, insights_session_ended)
+        # spotify_song_liked/spotify_playlist_track_added, insights_session_ended,
+        # variable_changed)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
         #
         # The two Spotify like/playlist events deliberately DON'T touch the Spotify sensor: they
@@ -561,6 +562,11 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # that has just ENDED, not current state, so a sensor holding it would report stale numbers
         # for however long until the next stream. Its whole payload rides the bus event, which is
         # what an automation wants (post a recap, log the numbers, drive a notification).
+        # variable_changed carries a Switchboard user variable (a death counter, a mode flag). The
+        # full set rides /api/state as `variables`, so `data["variables"]` is always current for a
+        # template sensor; a dedicated entity PER variable would mean creating and removing HA
+        # entities at runtime as the user adds and deletes them, which is a bigger product call
+        # than this contract sync. Automate on the event, or template off the coordinator data.
         return False
 
     @callback

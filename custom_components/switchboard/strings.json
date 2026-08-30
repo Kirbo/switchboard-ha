@@ -128,6 +128,42 @@
         }
       }
     },
+    "set_variable": {
+      "name": "Set a variable",
+      "description": "Set one of Switchboard's user variables (a counter, a mode flag, a label). Creates it if it doesn't exist yet, and fires Switchboard's variable_changed automations.",
+      "fields": {
+        "variable": {
+          "name": "Variable",
+          "description": "The variable name, e.g. deaths. Lowercased by Switchboard; letters, digits and underscores only."
+        },
+        "value": {
+          "name": "Value",
+          "description": "The value to store."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
+    "add_to_variable": {
+      "name": "Add to a variable",
+      "description": "Add a number to one of Switchboard's user variables (negative to subtract). A variable that doesn't exist yet starts at 0.",
+      "fields": {
+        "variable": {
+          "name": "Variable",
+          "description": "The variable name, e.g. deaths."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "How much to add. Negative subtracts. Defaults to 1."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
     "set_machine_state": {
       "name": "Set machine state (AFK)",
       "description": "Set the Switchboard machine's explicit state, firing its machine_state_afk / machine_state_active automations.",

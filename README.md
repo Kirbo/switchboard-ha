@@ -45,6 +45,12 @@ entities, and lets HA drive Switchboard actions through services.
   the stream stops, Switchboard auto-restores the OBS stream settings and fires
   `twitch_stream_target_restored`.
 - `switchboard.overlay_alert` — show an alert on the Switchboard alerts overlay.
+- `switchboard.set_variable` / `switchboard.add_to_variable` — write one of Switchboard's user
+  variables (counters, mode flags, labels). `add_to_variable` takes an `amount` (default `1`,
+  negative subtracts) and starts a missing variable at 0, so an HA automation can keep a tally
+  without any setup in Switchboard. Every variable's current value is on the coordinator data as
+  `variables` (from `/api/state`) and each change arrives as a `switchboard_event` of type
+  `variable_changed`.
 - `switchboard.set_machine_state` — set Switchboard's machine state (`afk` / `active`), e.g. from an
   HA presence automation; fires Switchboard's `machine_state_*` triggers so it runs its own AFK
   automations (and flips back to active on input).

@@ -72,6 +72,46 @@ overlay_alert:
         config_entry:
           integration: switchboard
 
+set_variable:
+  fields:
+    variable:
+      required: true
+      example: deaths
+      selector:
+        text:
+    value:
+      required: true
+      example: "0"
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
+
+add_to_variable:
+  fields:
+    variable:
+      required: true
+      example: deaths
+      selector:
+        text:
+    amount:
+      required: false
+      example: 1
+      selector:
+        number:
+          min: -1000000
+          max: 1000000
+          step: 0.001
+          mode: box
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
+
 set_machine_state:
   fields:
     state:

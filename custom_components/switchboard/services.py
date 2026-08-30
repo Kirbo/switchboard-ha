@@ -33,6 +33,8 @@ SERVICE_SET_MACHINE_STATE = "set_machine_state"
 SERVICE_LIGHT_FLASH = "light_flash"
 SERVICE_AFK_SNOOZE = "afk_snooze"
 SERVICE_AFK_RESET_IDLE = "afk_reset_idle"
+SERVICE_SET_VARIABLE = "set_variable"
+SERVICE_ADD_TO_VARIABLE = "add_to_variable"
 
 ATTR_ACTION_TYPE = "action_type"
 ATTR_TARGET = "target"
@@ -48,6 +50,8 @@ ATTR_ENTITY_ID = "entity_id"
 ATTR_FLASHES = "flashes"
 ATTR_COLOR = "color"
 ATTR_BRIGHTNESS = "brightness"
+ATTR_VARIABLE = "variable"
+ATTR_AMOUNT = "amount"
 ATTR_COLOR_TEMP_KELVIN = "color_temp_kelvin"
 ATTR_ON_MS = "on_ms"
 ATTR_OFF_MS = "off_ms"
@@ -91,6 +95,21 @@ OVERLAY_ALERT_SCHEMA = vol.Schema({vol.Required(ATTR_TEXT): cv.string, **_ENTRY_
 
 SET_MACHINE_STATE_SCHEMA = vol.Schema(
     {vol.Required(ATTR_STATE): vol.In(["afk", "active"]), **_ENTRY_FIELD}
+)
+
+# Switchboard user variables (counters, mode flags). The name rides action_params.variable; the
+# value/amount is the command's `value`. Switchboard lowercases the name and creates the variable
+# on first write, so no setup step is needed from here.
+SET_VARIABLE_SCHEMA = vol.Schema(
+    {vol.Required(ATTR_VARIABLE): cv.string, vol.Required(ATTR_VALUE): cv.string, **_ENTRY_FIELD}
+)
+
+ADD_TO_VARIABLE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_VARIABLE): cv.string,
+        vol.Optional(ATTR_AMOUNT, default=1): vol.Coerce(float),
+        **_ENTRY_FIELD,
+    }
 )
 
 # `ha_light_flash` — everything rides in action_params.ha_flash; only `entity_id` is required.
@@ -235,6 +254,29 @@ def async_register_services(hass: HomeAssistant) -> None:
         )
         coord.schedule_afk_refresh()
 
+    async def handle_set_variable(call: ServiceCall) -> None:
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+        await _send(
+            coord,
+            {
+                "action_type": "var_set",
+                "value": call.data[ATTR_VALUE],
+                "action_params": {"variable": call.data[ATTR_VARIABLE]},
+            },
+        )
+
+    async def handle_add_to_variable(call: ServiceCall) -> None:
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+        await _send(
+            coord,
+            {
+                "action_type": "var_add",
+                # Switchboard parses the amount itself; send it as the plain number it is.
+                "value": str(call.data[ATTR_AMOUNT]),
+                "action_params": {"variable": call.data[ATTR_VARIABLE]},
+            },
+        )
+
     async def handle_light_flash(call: ServiceCall) -> None:
         coord, target_id = _pick(hass, call.data[ATTR_TARGET], call.data[ATTR_ENTRY_ID])
         if not target_id:
@@ -284,6 +326,12 @@ def async_register_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_MACHINE_STATE, handle_set_machine_state, schema=SET_MACHINE_STATE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_VARIABLE, handle_set_variable, schema=SET_VARIABLE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_ADD_TO_VARIABLE, handle_add_to_variable, schema=ADD_TO_VARIABLE_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, SERVICE_LIGHT_FLASH, handle_light_flash, schema=LIGHT_FLASH_SCHEMA
