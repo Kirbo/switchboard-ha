@@ -542,8 +542,9 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # peer_lifecycle/peer_reachability, rule_fired, the rule_action_* trio,
         # rule_events_dropped, external_command, opendeck_*, twitch_event, twitch_go_live,
         # twitch_stream_target_restored, navigate_to_view, obs_reconnecting, obs_scene_renamed,
-        # obs_launched_local, mesh_identity_reset, plugin_paired/removed,
-        # spotify_song_liked/spotify_playlist_track_added)
+        # obs_launched_local, obs_stream_health, twitch_chat_command, mesh_identity_reset,
+        # plugin_paired/removed,
+        # spotify_song_liked/spotify_playlist_track_added, insights_session_ended)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
         #
         # The two Spotify like/playlist events deliberately DON'T touch the Spotify sensor: they
@@ -551,6 +552,15 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # frame arrives), and they are momentary actions rather than state. Automate on them with
         # `event_type: switchboard_event` + `event_data.type`, branching on the `liked`/`added`
         # boolean, which carries the direction.
+        #
+        # obs_stream_health is event-only for now: it IS a persisting state, but /api/state carries
+        # no health field, so an entity would have nothing to hydrate from after a restart and
+        # would sit at an invented value until the next verdict change. Automate on the event.
+        #
+        # insights_session_ended likewise backs no entity: it is a one-shot summary of a session
+        # that has just ENDED, not current state, so a sensor holding it would report stale numbers
+        # for however long until the next stream. Its whole payload rides the bus event, which is
+        # what an automation wants (post a recap, log the numbers, drive a notification).
         return False
 
     @callback
