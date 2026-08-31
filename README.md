@@ -119,8 +119,15 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 | **Host** | Switchboard machine's hostname or IP. |
 | **Port** | `38474` (the TLS mesh/API port) unless changed. |
 | **API token** | The External API bearer token from Switchboard. |
-| **Verify TLS certificate** | Leave **off** for the self-signed cert (default) unless you front it with a trusted certificate. |
-| **TLS fingerprint** | *Optional, recommended.* SHA-256 fingerprint to pin (shown on Switchboard's Peers tab) — pins the self-signed cert instead of skipping verification. |
+| **Verify TLS certificate** | Leave **off** for Switchboard's self-signed cert, and pin the fingerprint below. Turn it **on** only if you front the app with a certificate your Home Assistant trusts. |
+| **TLS fingerprint** | **Required** unless verification is on. SHA-256 fingerprint to pin, shown on Switchboard's Peers tab — it authenticates the self-signed cert instead of skipping verification. |
+
+> **One of the two is mandatory.** With verification off *and* no fingerprint, nothing authenticates
+> the connection: any device that can ARP-spoof your network terminates it with its own certificate
+> and reads the API token off the first request — a token that can drive OBS, post to your Twitch
+> chat and call Home Assistant services. The config flow refuses that combination, and since it used
+> to be the shipped default, an **existing** entry configured that way now stops loading and raises a
+> repair telling you to reconfigure. Paste the fingerprint and it starts again.
 
 > **Token kind.** Paste the **global** External API token (Settings → External API). The per-plugin
 > token from Switchboard's pairing Grant flow also authenticates, but it is scope-limited: the

@@ -8,17 +8,20 @@ from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN, CONF_VERIFY_SS
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.switchboard.const import DOMAIN
+from custom_components.switchboard.const import CONF_FINGERPRINT, DOMAIN
 
 from .conftest import FakeClient
 from .test_contract import API_AFK, API_STATE
 from .test_coordinator import CONNECTIONS
 
+# A pinned fingerprint, because SB-B-007 makes `verify_ssl: False` with no fingerprint refuse to
+# load — that pair was the old shipped default and is exactly what the guard exists to stop.
 ENTRY_DATA = {
     CONF_HOST: "192.0.2.10",
     CONF_PORT: 38474,
     CONF_TOKEN: "test-token",
     CONF_VERIFY_SSL: False,
+    CONF_FINGERPRINT: "ab" * 32,
 }
 
 

@@ -52,6 +52,12 @@
       "reconfigure_successful": "Reconfiguration was successful."
     }
   },
+  "issues": {
+    "insecure_tls": {
+      "title": "Switchboard connection is not authenticatable",
+      "description": "The Switchboard entry for **{host}** has certificate verification turned off and no TLS fingerprint pinned. Switchboard uses a self-signed certificate, so with neither of those the connection cannot be authenticated and anyone on your network could read the API token as it is sent — a token that can control OBS, post to your Twitch chat and call Home Assistant services.\n\nThis combination used to be the default, so entries created before this version are affected. The integration will not load until it is fixed.\n\nTo fix it: open the Switchboard integration, choose **Reconfigure**, and paste the TLS fingerprint from Switchboard's **Peers** tab (or turn on certificate verification if you front the app with a trusted certificate)."
+    }
+  },
   "services": {
     "run_action": {
       "name": "Run action",

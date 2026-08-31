@@ -11,8 +11,8 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv
+from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
@@ -33,8 +33,44 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+def _tls_issue_id(entry: ConfigEntry) -> str:
+    return f"insecure_tls_{entry.entry_id}"
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Switchboard from a config entry."""
+    # SB-B-007. The SB-A-061 guard was added to the config FLOW, so it only ever protected NEW
+    # configurations. This function rebuilds the client straight from `entry.data`, and every
+    # install created before that fix — when `verify_ssl: False` with an empty fingerprint was the
+    # shipped default — kept handing the GLOBAL Switchboard API token to anything able to ARP-spoof
+    # the segment, on every poll, indefinitely. There was no migration and no repair; the
+    # integration simply carried on.
+    #
+    # Refusing to load is the same answer the config flow already gives, and it is the only one that
+    # actually stops the leak: continuing to poll IS the vulnerability. `ConfigEntryError` (not
+    # `ConfigEntryNotReady`) so HA does not retry in a loop, paired with a repairs issue that says
+    # what to do — a silent failure would be worse than the insecure connection it replaces.
+    if (
+        not entry.data.get(CONF_VERIFY_SSL, False)
+        and not (entry.data.get(CONF_FINGERPRINT) or "").strip()
+    ):
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _tls_issue_id(entry),
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="insecure_tls",
+            translation_placeholders={"host": str(entry.data.get(CONF_HOST, ""))},
+        )
+        raise ConfigEntryError(
+            "This Switchboard connection cannot be authenticated: certificate verification is off "
+            "and no TLS fingerprint is pinned, so the API token would be readable by anything on "
+            "the network. Reconfigure the entry and set the fingerprint from Switchboard's Peers "
+            "tab."
+        )
+    # Authenticatable now — retire any issue raised by an earlier load.
+    ir.async_delete_issue(hass, DOMAIN, _tls_issue_id(entry))
     try:
         client = SwitchboardClient(
             async_get_clientsession(hass),
