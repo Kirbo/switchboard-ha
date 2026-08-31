@@ -133,10 +133,19 @@ class SwitchboardConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             host = user_input[CONF_HOST]
             port = user_input[CONF_PORT]
-            # Moving to a different instance must not collide with another entry (the entry
-            # being reconfigured is ignored by this check).
+            # Moving to a different instance must not collide with ANOTHER entry — but the entry
+            # being reconfigured obviously already owns its own host:port.
+            #
+            # `_abort_if_unique_id_configured()` cannot express that: it looks the unique_id up with
+            # `async_entry_for_domain_unique_id` and raises AbortFlow unconditionally, with no
+            # exclusion for the entry this flow is reconfiguring. So every reconfigure that kept the
+            # same host and port aborted with "already_configured" and saved NOTHING, while the
+            # dialog closed exactly like a success — which is how an entry could sit there insisting
+            # its fingerprint was unset after the user had just set it.
             await self.async_set_unique_id(f"{host}:{port}")
-            self._abort_if_unique_id_configured()
+            for other in self._async_current_entries(include_ignore=False):
+                if other.entry_id != entry.entry_id and other.unique_id == self.unique_id:
+                    return self.async_abort(reason="already_configured")
 
             error = await self._async_validate(user_input)
             if error:
