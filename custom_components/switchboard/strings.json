@@ -43,7 +43,8 @@
       "cannot_connect": "Failed to connect. Check the host, port, and that the External API is enabled.",
       "invalid_auth": "Invalid API token.",
       "access_denied": "The token works, but this device is denied by the Events/Control ACLs — allow your Home Assistant IP in Switchboard → Settings → External API.",
-      "bad_fingerprint": "The TLS fingerprint is not valid hex."
+      "bad_fingerprint": "The TLS fingerprint is not valid hex.",
+      "no_tls_trust": "Set the TLS fingerprint, or turn on certificate verification. Switchboard uses a self-signed certificate, so with neither of these the connection cannot be authenticated and anyone on your network could read the API token as it is sent. The fingerprint is on Switchboard's Peers tab."
     },
     "abort": {
       "already_configured": "This Switchboard instance is already configured.",

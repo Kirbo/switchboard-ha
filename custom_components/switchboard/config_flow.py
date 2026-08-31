@@ -7,6 +7,11 @@ from typing import Any
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN, CONF_VERIFY_SSL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 import voluptuous as vol
 
 from .api import (
@@ -17,17 +22,24 @@ from .api import (
 )
 from .const import CONF_FINGERPRINT, DEFAULT_PORT, DOMAIN
 
+# The token is a PASSWORD field, not plain text (SB-A-059). Home Assistant renders a plain `str`
+# in the clear, and `add_suggested_values_to_schema` below pre-fills it with the STORED value — so
+# opening Reconfigure, a normal thing to do while debugging, painted the Switchboard API token on
+# screen in full. That token drives every /api/command action, including ha_service_call against
+# the streamer's own house. `diagnostics.py` already redacts it; this form did not.
+_TOKEN_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
+
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
-        vol.Required(CONF_TOKEN): str,
+        vol.Required(CONF_TOKEN): _TOKEN_SELECTOR,
         vol.Required(CONF_VERIFY_SSL, default=False): bool,
         vol.Optional(CONF_FINGERPRINT, default=""): str,
     }
 )
 
-STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_TOKEN): str})
+STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_TOKEN): _TOKEN_SELECTOR})
 
 
 class SwitchboardConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -41,6 +53,14 @@ class SwitchboardConfigFlow(ConfigFlow, domain=DOMAIN):
         The client is constructed INSIDE the try: a malformed fingerprint raises ValueError
         from `bytes.fromhex` during construction, before any request is made.
         """
+        # SB-A-061: refuse a configuration with NEITHER TLS verification NOR a pinned fingerprint.
+        # That combination — which used to be the shipped default — means aiohttp is handed
+        # `ssl=False`, so any host that can ARP-spoof the segment terminates the connection with its
+        # own certificate and reads `Authorization: Bearer <token>` off the very first request. On a
+        # network that also runs IoT devices, that is a realistic attacker. Pin the fingerprint
+        # (shown on Switchboard's Peers tab) or front the app with a trusted certificate.
+        if not data.get(CONF_VERIFY_SSL, False) and not (data.get(CONF_FINGERPRINT) or "").strip():
+            return "no_tls_trust"
         try:
             client = SwitchboardClient(
                 async_get_clientsession(self.hass),
@@ -130,8 +150,13 @@ class SwitchboardConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
         return self.async_show_form(
             step_id="reconfigure",
+            # Everything EXCEPT the token is pre-filled. Suggesting the stored token would send it
+            # back down to the browser on every Reconfigure — the exact exposure the password
+            # selector above is there to prevent. Leaving it blank means "re-enter it", which is
+            # the right prompt for a credential.
             data_schema=self.add_suggested_values_to_schema(
-                STEP_USER_SCHEMA, user_input or dict(entry.data)
+                STEP_USER_SCHEMA,
+                {k: v for k, v in (user_input or dict(entry.data)).items() if k != CONF_TOKEN},
             ),
             errors=errors,
         )

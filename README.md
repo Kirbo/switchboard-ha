@@ -126,6 +126,14 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 > token from Switchboard's pairing Grant flow also authenticates, but it is scope-limited: the
 > `ha_*` actions behind `switchboard.light_flash` are global-token-only, so pairing would give you
 > a strictly weaker integration. There is deliberately no pairing step in this config flow.
+>
+> If you *do* use a paired token, this integration needs the **`read_events_sensitive`** scope as
+> well as `read_state`. Switchboard splits those deliberately: `read_state` is the rig (OBS, Spotify,
+> AFK, stream status), while `read_events_sensitive` covers the events that name your viewers or
+> describe your home — `twitch_event`, `twitch_chat_command`, `home_assistant_state_changed`,
+> `app_detect_changed`, `hotkey_pressed`. This integration mirrors those onto the HA bus, so without
+> that scope the corresponding sensors and event triggers simply never fire. Tokens paired before
+> the split keep it automatically; new ones need it ticked on the plugin's card in Switchboard.
 
 ## Notes
 
