@@ -33,6 +33,9 @@ class FakeClient:
         self.afk = afk if afk is not None else {}
         self.commands: list[dict[str, Any]] = []
         self.result: dict[str, Any] = {"ok": True, "acted": True}
+        # Set to make `send_command` raise instead of answering — how a test drives the failure
+        # paths (a spent write budget, a revoked token) through the service layer.
+        self.error: Exception | None = None
 
     async def fetch_state(self) -> dict[str, Any]:
         return self.state
@@ -45,6 +48,8 @@ class FakeClient:
 
     async def send_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.commands.append(payload)
+        if self.error is not None:
+            raise self.error
         return self.result
 
 

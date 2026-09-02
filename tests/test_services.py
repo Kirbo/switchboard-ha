@@ -7,6 +7,7 @@ from homeassistant.exceptions import HomeAssistantError
 import pytest
 import voluptuous as vol
 
+from custom_components.switchboard.api import SwitchboardRateLimitError
 from custom_components.switchboard.const import DOMAIN
 
 from .test_entities import _setup
@@ -164,6 +165,16 @@ async def test_a_rejected_command_raises(hass: HomeAssistant) -> None:
     entry = await _setup(hass)
     _client(hass, entry.entry_id).result = {"ok": False, "error": "nope"}
     with pytest.raises(HomeAssistantError):
+        await _call(hass, "overlay_alert", {"text": "x"})
+
+
+async def test_a_throttled_command_says_it_did_not_run(hass: HomeAssistant) -> None:
+    """The client already backed off and re-sent (docs/HA.md write budget); if it is STILL
+    throttled the service must say the action did not run and why, rather than the opaque
+    "command failed: HTTP 429" that reads like the app broke."""
+    entry = await _setup(hass)
+    _client(hass, entry.entry_id).error = SwitchboardRateLimitError("write budget spent")
+    with pytest.raises(HomeAssistantError, match="rate-limiting"):
         await _call(hass, "overlay_alert", {"text": "x"})
 
 

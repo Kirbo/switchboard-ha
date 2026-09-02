@@ -185,6 +185,10 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "categories": "Cyberpunk 2077",
     },
     {"type": "overlay_alert", "text": "KirboWned just followed!"},
+    # Redacted form (2026-09-02): a consumer without `read_events_sensitive` gets the SAME frame
+    # with that one field emptied — no new field, nothing absent, just "". See
+    # `test_redacted_frames_keep_their_shape`.
+    {"type": "overlay_alert", "text": ""},
     {"type": "mesh_identity_reset", "fingerprint": "4c9f84bb"},
     {"type": "peer_lifecycle", "peer_id": CID, "name": "Gaming", "state": "restarting"},
     {"type": "peer_reachability", "peer_id": CID, "name": "Gaming", "online": True},
@@ -245,10 +249,41 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "peer_name": "Gaming",
         "reason": "expired",
     },
+    # `value` populated: what a consumer HOLDING `read_events_sensitive` sees when the rule
+    # rendered it from a sensitive trigger. Without the scope the same frame arrives with
+    # `value: ""` (the documented example above) — see `test_redacted_frames_keep_their_shape`.
+    {
+        "type": "rule_fired",
+        "rule_id": CID,
+        "name": "Raid lights",
+        "action_type": "ha_light_flash",
+        "target": "light.studio_key",
+        "value": "mothlamp_99 raided with 42",
+        "actions": 3,
+        "ok": True,
+        "log_ui": True,
+    },
     {"type": "rule_events_dropped", "count": 3},
     {
         "type": "external_command",
         "source": "OpenDeck",
+        "action_type": "obs_scene_set",
+        "target": CID,
+        "value": "Gaming",
+    },
+    # Two more `source` shapes reach the same event (2026-09-02, additive — no new type, no new
+    # field): a `switchboard://` deep link the operator approved on that machine, and an action a
+    # paired peer forwarded over the mesh. A consumer keying on `source` must tolerate both.
+    {
+        "type": "external_command",
+        "source": "Deep link",
+        "action_type": "obs_scene_set",
+        "target": CID,
+        "value": "Gaming",
+    },
+    {
+        "type": "external_command",
+        "source": "Peer Gaming",
         "action_type": "obs_scene_set",
         "target": CID,
         "value": "Gaming",
@@ -439,3 +474,44 @@ def test_afk_threshold_null_means_never() -> None:
 def test_every_documented_event_is_json_shaped(frame: dict[str, Any]) -> None:
     """Cheap sanity net so a malformed fixture can't make the coordinator tests vacuous."""
     assert isinstance(frame.get("type"), str)
+
+
+# docs/HA.md "Connections & current state" — one `GET /api/connections` row, verbatim.
+API_CONNECTION: dict[str, Any] = {
+    "id": CID,
+    "integration": "obs",
+    "label": "Home OBS",
+    "is_default": True,
+    "enabled": True,
+    "needs_reauth": False,
+    "alert_on_launch": False,
+    "created_at": 1700000000,
+}
+
+
+def test_connections_row_carries_needs_reauth() -> None:
+    """`needs_reauth` (Twitch AND Home Assistant connections, written the moment the provider
+    rejects the credential) is what the "needs re-authentication" sensor reads. A row from an
+    older app omits it entirely, which must read as "fine", not as a problem."""
+    assert API_CONNECTION["needs_reauth"] is False
+    assert {"id", "integration", "label", "is_default", "enabled"} <= set(API_CONNECTION)
+
+
+def test_redacted_frames_keep_their_shape() -> None:
+    """docs/HA.md "Two read scopes": a consumer without `read_events_sensitive` receives
+    `rule_fired` / `overlay_alert` with `value` / `text` as an EMPTY STRING — same type, same
+    keys, nothing absent. Anything reading them must treat "" as "not disclosed" rather than
+    KeyError on a missing field or render a blank as a real value.
+    """
+    redacted = [f for f in DOCUMENTED_EVENTS if f["type"] in ("rule_fired", "overlay_alert")]
+    assert {f["type"] for f in redacted} == {"rule_fired", "overlay_alert"}
+    for frame in redacted:
+        field = "value" if frame["type"] == "rule_fired" else "text"
+        assert field in frame, "the redacted field is emptied, never dropped"
+        assert isinstance(frame[field], str)
+    # Both the emptied and the populated form are represented, so a consumer is exercised against
+    # each one.
+    assert any(f["value"] == "" for f in redacted if f["type"] == "rule_fired")
+    assert any(f["value"] for f in redacted if f["type"] == "rule_fired")
+    assert any(f["text"] == "" for f in redacted if f["type"] == "overlay_alert")
+    assert any(f["text"] for f in redacted if f["type"] == "overlay_alert")

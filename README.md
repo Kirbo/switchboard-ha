@@ -19,7 +19,11 @@ entities, and lets HA drive Switchboard actions through services.
   connection: `Live`; global: `AFK` (attributes: `threshold_secs` — how long idle before the
   idle→AFK automation fires, with any per-scene override applied, `null` = never — and
   `snooze_until`), `Watched app active` (app-detection — a watched app is focused *or* running),
-  `Update available`.
+  `Update available`, `Connection needs re-authentication` (a diagnostic **problem** sensor: on
+  while any Switchboard connection's own credential was rejected by its provider — a revoked
+  Twitch refresh token, a Home Assistant long-lived token answered with `auth_invalid`. That is
+  not "offline": the app has stopped retrying and nothing reconnects until someone replaces the
+  credential in Switchboard. Attributes name the affected `connections` and `integrations`).
 - **Sensors** — per OBS connection: current `Scene` (attribute: that instance's `scenes` list),
   `Stream started` (timestamp — derive uptime from it) and `Stream delay` (seconds, `0` = off);
   per Twitch connection: `Viewers`, `Chatters`, `Followers`, `Subscribers` (the last two are the
@@ -76,6 +80,14 @@ and fields), including the ones that back no entity: `twitch_event` (follows/sub
 `external_command_failed`, `twitch_audience_totals`,
 `opendeck_event`, `mesh_identity_reset`, the go-live pair `twitch_go_live` /
 `twitch_stream_target_restored`, and the rest of the contract's event vocabulary.
+
+> **Two of those arrive redacted without `read_events_sensitive`.** `rule_fired.value` and
+> `overlay_alert.text` are rendered from whatever triggered the rule — a viewer's name, a chat
+> message, an HA entity's state — so a token without that scope receives the *same frame* with
+> that one field as an **empty string**. Nothing else changes: same event type, same keys, nothing
+> absent. An automation that puts `event_data.value` into a notification should skip the
+> notification when it is empty rather than send a blank one. With the global token (the
+> recommended one, see below) both arrive populated.
 
 ```yaml
 automation:
@@ -140,12 +152,22 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 > well as `read_state`. Switchboard splits those deliberately: `read_state` is the rig (OBS, Spotify,
 > AFK, stream status), while `read_events_sensitive` covers the events that name your viewers or
 > describe your home — `twitch_event`, `twitch_chat_command`, `home_assistant_state_changed`,
-> `app_detect_changed`, `hotkey_pressed`. This integration mirrors those onto the HA bus, so without
-> that scope the corresponding sensors and event triggers simply never fire. Tokens paired before
-> the split keep it automatically; new ones need it ticked on the plugin's card in Switchboard.
+> `app_detect_changed`, `hotkey_pressed` (plus the app's own diagnostics frames
+> `home_assistant_flash_issue` / `home_assistant_flash_restored` and `plugin_pair_requested`, which
+> back no entity here). This integration mirrors those onto the HA bus, so without that scope the
+> corresponding sensors and event triggers simply never fire, and `rule_fired` / `overlay_alert`
+> arrive with their text emptied (see the bus-event note above). Tokens paired before the split
+> keep it automatically; new ones need it ticked on the plugin's card in Switchboard.
 
 ## Notes
 
+- **Commands are rate-limited by Switchboard**, not by this integration: every caller gets a write
+  budget of 10 commands per second (burst 30) shared across `POST /api/command` and `POST /api/event`,
+  and over it the app answers `429`. That is a "slow down", never an outage or a bad token — the
+  budget refills continuously, so the client waits and re-sends (up to four attempts over ~1.75 s)
+  before the service call fails, and the events websocket and entities are untouched either way.
+  Nothing driven at human pace will ever see it; a script looping over a dozen actions might, and
+  should space them out.
 - The API event/command schema is **additive**: new event types and fields appear over time and are
   ignored if unknown. New OBS/Twitch connections added (or renamed) in Switchboard trigger a reload
   so their entities and device names follow.

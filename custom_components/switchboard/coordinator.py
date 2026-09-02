@@ -299,6 +299,25 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 return c.get("label", connection_id)
         return connection_id
 
+    def reauth_needed(self) -> list[dict[str, str]]:
+        """Connections the provider REJECTED the credential of (`needs_reauth`, docs/HA.md).
+
+        Not "currently disconnected" (that is the per-integration state in `/api/state`): a
+        `needs_reauth` connection cannot come back without a human replacing the credential in
+        Switchboard — a Twitch refresh token the authorization no longer covers, or a Home
+        Assistant long-lived token the instance answered `auth_invalid` to. The app writes it the
+        moment the provider says no, and announces the change as `connections_changed`.
+        """
+        return [
+            {
+                "id": c["id"],
+                "label": c.get("label", c["id"]),
+                "integration": c.get("integration", ""),
+            }
+            for c in self.connections
+            if c.get("needs_reauth")
+        ]
+
     def default_id(self, integration: str) -> str | None:
         """The default connection for an integration — or the only one, which the app treats as
         the implicit default. None when there are several and none is flagged."""
@@ -699,9 +718,15 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 except SwitchboardApiError as err:
                     _LOGGER.debug("switchboard: connection refresh failed: %s", err)
                     return
+                previous = self.connections
                 if self._replace_connections(new_conns):
                     # Entry reload scheduled (which also cancels this task's owner).
                     return
+                if new_conns != previous:
+                    # Same entity shape, different rows — a `needs_reauth` flip is exactly this
+                    # case, and the entity reading it would otherwise sit stale until the next
+                    # reconnect resync.
+                    self.async_update_listeners()
                 if not self._refresh_again:
                     return
         finally:

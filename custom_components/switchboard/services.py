@@ -22,7 +22,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
 
-from .api import SwitchboardApiError
+from .api import SwitchboardApiError, SwitchboardRateLimitError
 from .const import DOMAIN
 
 SERVICE_RUN_ACTION = "run_action"
@@ -187,6 +187,14 @@ def _pick(hass: HomeAssistant, target: str, entry_id: str = "") -> tuple[Any, st
 async def _send(coord: Any, payload: dict[str, Any]) -> None:
     try:
         result = await coord.client.send_command(payload)
+    except SwitchboardRateLimitError as err:
+        # The client already backed off and re-sent (api.RATE_LIMIT_BACKOFF); still throttled means
+        # this HA instance really is writing faster than Switchboard's 10/s budget. Say so, and say
+        # that nothing ran — a script that loops over a dozen actions should space them out.
+        raise HomeAssistantError(
+            "Switchboard is rate-limiting this integration (write budget: 10 commands per "
+            "second) — the action did NOT run. Space the calls out and try again."
+        ) from err
     except SwitchboardApiError as err:
         raise HomeAssistantError(f"Switchboard command failed: {err}") from err
     if not result.get("ok"):

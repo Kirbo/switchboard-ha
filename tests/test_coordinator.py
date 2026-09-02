@@ -316,3 +316,38 @@ async def test_connections_without_optional_keys_do_not_crash(hass: HomeAssistan
     assert coord.obs_ids() == set()
     assert coord.resolve_connection_id("whatever") is None
     assert coord.connection_label("a") == "a"
+
+
+async def test_reauth_needed_lists_only_rejected_credentials(hass: HomeAssistant) -> None:
+    """`needs_reauth` (docs/HA.md `/api/connections`) is "a human must replace this credential",
+    not "currently offline" — a disabled or merely disconnected row must not appear."""
+    coord = make_coordinator(hass)
+    assert coord.reauth_needed() == []
+    coord.connections = [
+        {"id": "a", "integration": "twitch", "label": "Main", "needs_reauth": True},
+        {"id": "b", "integration": "obs", "label": "Home OBS", "enabled": False},
+        {"id": "c", "integration": "home_assistant", "label": "Studio HA", "needs_reauth": False},
+    ]
+    assert coord.reauth_needed() == [
+        {"id": "a", "label": "Main", "integration": "twitch"},
+    ]
+
+
+async def test_a_needs_reauth_flip_pushes_to_entities(hass: HomeAssistant) -> None:
+    """`connections_changed` with the SAME entity shape used to update nothing — the entity
+    reading `needs_reauth` would have sat stale until the next reconnect resync."""
+    coord = make_coordinator(hass)
+    updates = 0
+
+    def _listener() -> None:
+        nonlocal updates
+        updates += 1
+
+    coord.async_add_listener(_listener)
+    coord.client.connections = [  # type: ignore[attr-defined]
+        {**c, "needs_reauth": c["integration"] == "twitch"} for c in CONNECTIONS
+    ]
+    coord._apply({"type": "connections_changed"})
+    await hass.async_block_till_done()
+    assert [r["label"] for r in coord.reauth_needed()] == ["Main"]
+    assert updates >= 1

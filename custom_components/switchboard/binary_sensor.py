@@ -33,6 +33,7 @@ async def async_setup_entry(
         SwitchboardAfkSensor(coordinator, entry),
         SwitchboardAppActiveSensor(coordinator, entry),
         UpdateAvailableSensor(coordinator, entry),
+        NeedsReauthSensor(coordinator, entry),
     ]
     for cid in coordinator.obs_ids():
         entities += [
@@ -124,6 +125,38 @@ class TwitchLiveSensor(SwitchboardTwitchEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         inst = self.coordinator.data.twitch.get(self._cid)
         return bool(inst and inst.get("live"))
+
+
+class NeedsReauthSensor(SwitchboardHubEntity, BinarySensorEntity):
+    """On while any Switchboard connection's own credential was rejected by its provider.
+
+    `needs_reauth` on `/api/connections` (docs/HA.md) covers the app's Twitch accounts and its
+    downstream Home Assistant connections. It is not "offline": the app has STOPPED retrying that
+    credential and nothing reconnects until a human replaces it in Switchboard — which is exactly
+    the thing worth a notification, since the failure is otherwise silent until the next stream.
+    """
+
+    _attr_name = "Connection needs re-authentication"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:key-alert"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_needs_reauth"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator.reauth_needed())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """Which connections, so a notification can name them instead of saying "something"."""
+        rows = self.coordinator.reauth_needed()
+        return {
+            "connections": [r["label"] for r in rows],
+            "integrations": sorted({r["integration"] for r in rows if r["integration"]}),
+        }
 
 
 class UpdateAvailableSensor(SwitchboardHubEntity, BinarySensorEntity):

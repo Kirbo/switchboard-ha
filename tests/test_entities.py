@@ -86,6 +86,27 @@ async def test_entities_are_created_from_the_snapshot(hass: HomeAssistant) -> No
     assert update.attributes["version"] == "2026.7.1"
 
 
+async def test_needs_reauth_sensor_is_off_until_a_credential_is_rejected(
+    hass: HomeAssistant,
+) -> None:
+    """One hub-level PROBLEM sensor covers every connection carrying `needs_reauth`
+    (docs/HA.md) — Twitch accounts and the app's downstream Home Assistant connections alike."""
+    entry = await _setup(hass)
+    coord = hass.data[DOMAIN][entry.entry_id]
+    sensor = "binary_sensor.switchboard_test_connection_needs_re_authentication"
+    assert hass.states.get(sensor).state == "off"
+
+    coord.connections = [
+        {**c, "needs_reauth": c["integration"] == "twitch"} for c in coord.connections
+    ]
+    coord.async_update_listeners()
+    await hass.async_block_till_done()
+    state = hass.states.get(sensor)
+    assert state.state == "on"
+    assert state.attributes["connections"] == ["Main"]
+    assert state.attributes["integrations"] == ["twitch"]
+
+
 async def test_services_are_registered(hass: HomeAssistant) -> None:
     await _setup(hass)
     for service in (
