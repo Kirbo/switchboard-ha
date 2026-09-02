@@ -24,7 +24,7 @@ run = "ruff format custom_components tests"
 [tasks.venv]
 description = "Provision .venv with Home Assistant + the test harness"
 run = """
-uv venv --python 3.14 .venv
+uv venv --allow-existing --python 3.14 .venv
 uv pip install --python .venv/bin/python -r requirements-test.txt
 """
 
