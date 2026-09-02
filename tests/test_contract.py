@@ -106,6 +106,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "game_name": "Just Chatting",
     },
     {"type": "twitch_chatters_updated", "connection_id": CID, "watching": 42, "chatters": 7},
+    {"type": "twitch_audience_totals", "connection_id": CID, "followers": 1234, "subs": 56},
     {
         "type": "twitch_event",
         "connection_id": CID,
@@ -184,9 +185,25 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "categories": "Cyberpunk 2077",
     },
     {"type": "overlay_alert", "text": "KirboWned just followed!"},
-    {"type": "mesh_identity_reset", "fingerprint": "AA:BB"},
+    {"type": "mesh_identity_reset", "fingerprint": "4c9f84bb"},
     {"type": "peer_lifecycle", "peer_id": CID, "name": "Gaming", "state": "restarting"},
     {"type": "peer_reachability", "peer_id": CID, "name": "Gaming", "online": True},
+    {
+        "type": "peer_state_changed",
+        "peer_id": CID,
+        "obs": [
+            {
+                "id": CID,
+                "label": "OBS",
+                "connected": True,
+                "streaming": True,
+                "recording": False,
+                "current_scene": "Gaming",
+                "stream_started_ms": 1700000000000,
+                "stream_delay_secs": None,
+            }
+        ],
+    },
     {"type": "opendeck_connection", "plugin_id": CID, "name": "Deck", "connected": True},
     {"type": "plugin_paired", "name": "Deck"},
     {"type": "plugin_removed", "name": "Deck"},
@@ -236,6 +253,13 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "target": CID,
         "value": "Gaming",
     },
+    {
+        "type": "external_command_failed",
+        "source": "OpenDeck",
+        "action_type": "twitch_go_live",
+        "target": CID,
+        "error": "twitch_go_live: refusing to send the stream key to OBS at 192.168.1.56",
+    },
     {"type": "opendeck_event", "source": "opendeck", "fields": [["button", "scene_1"]]},
     {"type": "navigate_to_view", "view": "settings", "anchor": "gpu", "source": "OpenDeck"},
 ]
@@ -284,6 +308,8 @@ API_STATE: dict[str, Any] = {
             "category_name": "Just Chatting",
             "box_art_url": "https://example.invalid/box.png",
             "started_at_ms": 1700000000000,
+            "followers": 1234,
+            "subs": 56,
         }
     ],
     "machine_state": "active",
@@ -293,6 +319,7 @@ API_STATE: dict[str, Any] = {
         "watched_focused": True,
         "watched_running": False,
     },
+    "variables": {"deaths": "3", "mode": "gaming"},
     "version": "2026.6.10",
     "update": {"version": "2026.7.1", "body": "notes", "ready": False},
 }
@@ -336,6 +363,11 @@ def test_api_state_maps_every_documented_field() -> None:
     assert tw["category_name"] == "Just Chatting"
     assert tw["box_art_url"] == "https://example.invalid/box.png"
     assert tw["started_at_ms"] == 1700000000000
+    assert tw["followers"] == 1234
+    assert tw["subs"] == 56
+
+    # The README promises `data["variables"]`; nothing populated it until 2026-09-02.
+    assert data.variables == {"deaths": "3", "mode": "gaming"}
 
     assert data.afk is False  # machine_state "active"
     assert data.focused_app == "steam_app_599140"
@@ -352,6 +384,7 @@ def test_api_state_tolerates_an_empty_snapshot() -> None:
     data = _state_from_snapshot({})
     assert data.obs == {}
     assert data.twitch == {}
+    assert data.variables == {}
     assert data.spotify == "stopped"
     assert data.spotify_now is None
     assert data.afk is False

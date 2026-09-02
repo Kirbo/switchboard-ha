@@ -55,6 +55,8 @@ async def test_entities_are_created_from_the_snapshot(hass: HomeAssistant) -> No
 
     assert hass.states.get("sensor.main_viewers").state == "42"
     assert hass.states.get("sensor.main_chatters").state == "7"
+    assert hass.states.get("sensor.main_followers").state == "1234"
+    assert hass.states.get("sensor.main_subscribers").state == "56"
     assert hass.states.get("sensor.main_category").state == "Just Chatting"
     assert hass.states.get("binary_sensor.main_live").state == "on"
     assert hass.states.get("sensor.main_live_since").state == "2023-11-14T22:13:20+00:00"

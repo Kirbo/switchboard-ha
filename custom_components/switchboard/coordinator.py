@@ -87,6 +87,10 @@ class SwitchboardData:
     # second by design and are deliberately not mirrored — poll /api/afk for a live countdown.
     afk_threshold_secs: int | None = None
     afk_snooze_until_ms: int | None = None
+    # Switchboard's user variables (name -> value, values are strings), seeded from /api/state's
+    # `variables` and kept live by `variable_changed` — the README promises `data["variables"]`
+    # to template sensors, and until 2026-09-02 nothing populated it.
+    variables: dict[str, str] = field(default_factory=dict)
 
     @property
     def watched_app_active(self) -> bool:
@@ -104,6 +108,9 @@ _TWITCH_KEYS = (
     "category_name",
     "box_art_url",
     "started_at_ms",
+    # Audience totals (null until the tracker's first cycle); live via `twitch_audience_totals`.
+    "followers",
+    "subs",
 )
 
 # The now-playing fields we surface. `position_ms`/`updated_at_ms` are deliberately dropped:
@@ -209,6 +216,7 @@ def _state_from_snapshot(
         running_apps=list(apps.get("running") or []),
         watched_focused=bool(apps.get("watched_focused")),
         watched_running=bool(apps.get("watched_running")),
+        variables={str(k): str(v) for k, v in (raw.get("variables") or {}).items()},
         # Preserved across a resync — /api/state doesn't carry them, /api/afk does.
         afk_threshold_secs=previous.afk_threshold_secs if previous else None,
         afk_snooze_until_ms=previous.afk_snooze_until_ms if previous else None,
@@ -513,6 +521,22 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             inst["viewers"] = frame.get("watching")
             inst["chatters"] = frame.get("chatters")
             return True
+        if etype == "twitch_audience_totals":
+            # Follower/subscriber totals on the tracker's cadence — the same numbers /api/state's
+            # twitch snaps carry as `followers`/`subs`, so this keeps the resync seed live.
+            inst = data.twitch.setdefault(cid, {})
+            inst["followers"] = frame.get("followers")
+            inst["subs"] = frame.get("subs")
+            return True
+
+        if etype == "variable_changed":
+            # One user variable set/incremented; the full map was seeded from /api/state.
+            name = frame.get("name")
+            if not isinstance(name, str) or not name:
+                return False
+            value = frame.get("value")
+            data.variables[name] = "" if value is None else str(value)
+            return True
 
         if etype == "update_available":
             data.update = {
@@ -539,15 +563,20 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             return self._set_spotify(None, SPOTIFY_STOPPED)
 
         # Everything else on the contract's event list (home_assistant_*, overlay_alert,
-        # peer_lifecycle/peer_reachability, rule_fired, the rule_action_* trio,
-        # rule_events_dropped, external_command, opendeck_*, twitch_event, twitch_go_live,
-        # twitch_stream_target_restored, navigate_to_view, obs_reconnecting, obs_scene_renamed,
-        # obs_launched_local, obs_stream_health, twitch_chat_command, mesh_identity_reset,
-        # plugin_paired/removed,
+        # peer_lifecycle/peer_reachability/peer_state_changed, rule_fired, the rule_action_* trio,
+        # rule_events_dropped, external_command/external_command_failed, opendeck_*, twitch_event,
+        # twitch_go_live, twitch_stream_target_restored, navigate_to_view, obs_reconnecting,
+        # obs_scene_renamed, obs_launched_local, obs_stream_health, twitch_chat_command,
+        # mesh_identity_reset, plugin_paired/removed,
         # spotify_song_liked/spotify_playlist_track_added, insights_session_ended,
-        # variable_changed, obs_input_mute_changed, twitch_clip_created, obs_disk_space,
+        # obs_input_mute_changed, twitch_clip_created, obs_disk_space,
         # overlay_countdown, hotkey_pressed)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
+        #
+        # peer_state_changed carries a paired PEER machine's OBS snapshot (the mesh mirror); this
+        # integration models one Switchboard machine per config entry, so a peer's OBS is that
+        # peer's own entry. external_command_failed is the failure edge of external_command —
+        # momentary, for notifications.
         #
         # The two Spotify like/playlist events deliberately DON'T touch the Spotify sensor: they
         # carry no now-playing snapshot (the liked track may already have moved on by the time the
@@ -584,11 +613,10 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # nothing to hydrate from after a restart and would sit at an invented value until the next
         # change. Automate on the event.
         #
-        # variable_changed carries a Switchboard user variable (a death counter, a mode flag). The
-        # full set rides /api/state as `variables`, so `data["variables"]` is always current for a
-        # template sensor; a dedicated entity PER variable would mean creating and removing HA
-        # entities at runtime as the user adds and deletes them, which is a bigger product call
-        # than this contract sync. Automate on the event, or template off the coordinator data.
+        # (variable_changed IS applied above — it patches `data.variables`, seeded from
+        # /api/state, so a template sensor can read it — but a dedicated entity PER variable would
+        # mean creating and removing HA entities at runtime as the user adds and deletes them,
+        # which is a bigger product call than this contract sync.)
         return False
 
     @callback

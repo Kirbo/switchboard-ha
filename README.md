@@ -22,8 +22,9 @@ entities, and lets HA drive Switchboard actions through services.
   `Update available`.
 - **Sensors** — per OBS connection: current `Scene` (attribute: that instance's `scenes` list),
   `Stream started` (timestamp — derive uptime from it) and `Stream delay` (seconds, `0` = off);
-  per Twitch connection: `Viewers`, `Chatters`, `Category` (attributes: category id, box-art URL,
-  title, `started_at_ms`) and `Live since` (timestamp); global: `Spotify` playback
+  per Twitch connection: `Viewers`, `Chatters`, `Followers`, `Subscribers` (the last two are the
+  app's audience-tracker totals — unknown until it has run once), `Category` (attributes: category
+  id, box-art URL, title, `started_at_ms`) and `Live since` (timestamp); global: `Spotify` playback
   (`playing`/`paused`/`stopped`) with now-playing attributes (title, artist, featuring, album,
   playlist, playlist URL, art URL, up-next track, duration), `Focused app` (attributes: the
   `running` watch-list ids plus the separate `watched_focused` / `watched_running` flags), and
@@ -70,8 +71,9 @@ optional `entry_id` to address a specific instance when several Switchboard mach
 **Bus event** — **every** Switchboard event is re-fired as `switchboard_event` (with its raw `type`
 and fields), including the ones that back no entity: `twitch_event` (follows/subs/raids/cheers),
 `rule_fired`, the peer-action queue trio `rule_action_queued` / `_delivered` / `_failed`,
-`rule_events_dropped`, `peer_lifecycle` / `peer_reachability`, `overlay_alert`,
-`home_assistant_state_changed` (Switchboard's *own* watched HA entities), `external_command`,
+`rule_events_dropped`, `peer_lifecycle` / `peer_reachability` / `peer_state_changed`, `overlay_alert`,
+`home_assistant_state_changed` (Switchboard's *own* watched HA entities), `external_command` /
+`external_command_failed`, `twitch_audience_totals`,
 `opendeck_event`, `mesh_identity_reset`, the go-live pair `twitch_go_live` /
 `twitch_stream_target_restored`, and the rest of the contract's event vocabulary.
 

@@ -47,6 +47,10 @@ async def async_setup_entry(
         entities += [
             TwitchCountSensor(coordinator, entry, cid, "viewers", "Viewers", "mdi:eye"),
             TwitchCountSensor(coordinator, entry, cid, "chatters", "Chatters", "mdi:chat"),
+            # Audience totals from /api/state (`followers`/`subs`), live via
+            # `twitch_audience_totals`; unknown until the app's tracker has run once.
+            TwitchCountSensor(coordinator, entry, cid, "followers", "Followers", "mdi:heart"),
+            TwitchCountSensor(coordinator, entry, cid, "subs", "Subscribers", "mdi:star"),
             TwitchCategorySensor(coordinator, entry, cid),
             TwitchLiveSinceSensor(coordinator, entry, cid),
         ]

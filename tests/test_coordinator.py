@@ -204,6 +204,32 @@ async def test_twitch_events_patch_the_account(hass: HomeAssistant) -> None:
     assert coord._apply({"type": "twitch_stream_status", "connection_id": TWITCH_ID, "live": False})
     assert coord.data.twitch[TWITCH_ID]["live"] is False
 
+    # Audience totals ride their own event (tracker cadence, on change) — the same numbers the
+    # snapshot seeds as `followers`/`subs`, so the Followers/Subscribers sensors stay live.
+    assert coord.data.twitch[TWITCH_ID]["followers"] == 1234  # seeded from API_STATE
+    assert coord._apply(
+        {
+            "type": "twitch_audience_totals",
+            "connection_id": TWITCH_ID,
+            "followers": 1300,
+            "subs": 60,
+        }
+    )
+    assert coord.data.twitch[TWITCH_ID]["followers"] == 1300
+    assert coord.data.twitch[TWITCH_ID]["subs"] == 60
+
+
+async def test_variable_changed_patches_the_variables_map(hass: HomeAssistant) -> None:
+    coord = make_coordinator(hass)
+    assert coord.data.variables == {"deaths": "3", "mode": "gaming"}  # seeded from /api/state
+    assert coord._apply({"type": "variable_changed", "name": "deaths", "value": "4"})
+    assert coord.data.variables == {"deaths": "4", "mode": "gaming"}
+    # A new name is added, not dropped — the snapshot map is a seed, the events keep it current.
+    assert coord._apply({"type": "variable_changed", "name": "raids", "value": "1"})
+    assert coord.data.variables["raids"] == "1"
+    # A frame without a usable name changes nothing (and does not raise).
+    assert not coord._apply({"type": "variable_changed", "value": "9"})
+
 
 async def test_app_detect_keeps_the_two_flags_separate(hass: HomeAssistant) -> None:
     coord = make_coordinator(hass)
