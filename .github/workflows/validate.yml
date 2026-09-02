@@ -6,6 +6,10 @@ on:
   schedule:
     - cron: "0 6 * * *"
 
+# Least privilege by default; only the release job (below) asks for `contents: write`.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint
@@ -32,7 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: hacs/action@main
+      # Pinned to a commit (main as of 2026-09-02) — a mutable branch ref in the repo that ships
+      # to users is a supply-chain hole; bump deliberately.
+      - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
         with:
           category: integration
 
@@ -41,7 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: home-assistant/actions/hassfest@master
+      # Same: pinned to master as of 2026-09-02.
+      - uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # master
 
   release:
     name: Release
