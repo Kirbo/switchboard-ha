@@ -156,8 +156,10 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 > `home_assistant_flash_issue` / `home_assistant_flash_restored` and `plugin_pair_requested`, which
 > back no entity here). This integration mirrors those onto the HA bus, so without that scope the
 > corresponding sensors and event triggers simply never fire, and `rule_fired` / `overlay_alert`
-> arrive with their text emptied (see the bus-event note above). Tokens paired before the split
-> keep it automatically; new ones need it ticked on the plugin's card in Switchboard.
+> arrive with their text emptied (see the bus-event note above). `twitch_chat_message` behaves the
+> same way as those two rather than vanishing: it always reaches the HA bus so chat can be counted,
+> but without the scope its `author` and `text` are `null`. Tokens paired before the split keep the
+> scope automatically; new ones need it ticked on the plugin's card in Switchboard.
 
 ## Notes
 

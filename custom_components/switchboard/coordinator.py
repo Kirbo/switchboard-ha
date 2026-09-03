@@ -589,7 +589,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # mesh_identity_reset, plugin_paired/removed,
         # spotify_song_liked/spotify_playlist_track_added, insights_session_ended,
         # obs_input_mute_changed, twitch_clip_created, obs_disk_space,
-        # overlay_countdown, hotkey_pressed)
+        # overlay_countdown, hotkey_pressed, twitch_chat_message)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
         #
         # peer_state_changed carries a paired PEER machine's OBS snapshot (the mesh mirror); this
