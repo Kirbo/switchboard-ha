@@ -182,6 +182,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "unique_chatters": 90,
         "raids": 1,
         "bits": 500,
+        "clips": 3,
         "categories": "Cyberpunk 2077",
     },
     {"type": "overlay_alert", "text": "KirboWned just followed!"},
