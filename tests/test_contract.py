@@ -157,6 +157,28 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "is_mod": True,
         "is_sub": True,
     },
+    # `twitch_chat_message` (2026-09-04): the ONE event that is redacted rather than withheld.
+    # `author`/`text` are `null` unless the streamer runs `twitch_chat_event_detail = full` AND the
+    # consumer holds `read_events_sensitive` — a consumer reading them as `str` is the bug
+    # SB-E-034 warns about. Both forms are here so `_apply` is exercised against each.
+    {
+        "type": "twitch_chat_message",
+        "connection_id": CID,
+        "channel": "kirbownd",
+        "author": None,
+        "text": None,
+        "action": False,
+        "first": False,
+    },
+    {
+        "type": "twitch_chat_message",
+        "connection_id": CID,
+        "channel": "kirbownd",
+        "author": "mothlamp_99",
+        "text": "hello chat",
+        "action": False,
+        "first": True,
+    },
     {
         "type": "obs_stream_health",
         "connection_id": CID,
@@ -206,6 +228,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
                 "current_scene": "Gaming",
                 "stream_started_ms": 1700000000000,
                 "stream_delay_secs": None,
+                "go_live_ok": True,
             }
         ],
     },
@@ -312,10 +335,12 @@ API_STATE: dict[str, Any] = {
             "current_scene": "Gaming",
             "stream_started_ms": 1700000000000,
             "stream_delay_secs": 20,
+            "go_live_ok": True,
         }
     ],
     "spotify": "playing",
     "afk": False,
+    "seq": 1756800000123,
     "spotify_now": {
         "playing": True,
         "title": "Song",
@@ -331,6 +356,8 @@ API_STATE: dict[str, Any] = {
         "position_ms": 45000,
         "duration_ms": 180000,
         "updated_at_ms": 1700000000000,
+        "enriching": False,
+        "direction": "next",
     },
     "twitch": [
         {
@@ -391,6 +418,11 @@ def test_api_state_maps_every_documented_field() -> None:
     assert data.spotify_now["duration_ms"] == 180000
     # Position is deliberately dropped — it drifts every few seconds (see `_SPOTIFY_KEYS`).
     assert "position_ms" not in data.spotify_now
+    # `enriching` / `direction` (2026-09-08) are transient track-change metadata, not now-playing
+    # state: `enriching` flips back within a second and `direction` describes the last change.
+    # Neither backs an attribute, so they must be tolerated, never mirrored.
+    assert "enriching" not in data.spotify_now
+    assert "direction" not in data.spotify_now
 
     tw = data.twitch["22222222-2222-2222-2222-222222222222"]
     assert tw["live"] is True
@@ -413,6 +445,10 @@ def test_api_state_maps_every_documented_field() -> None:
     assert data.watched_app_active is True
     assert data.version == "2026.6.10"
     assert data.update == {"version": "2026.7.1", "body": "notes", "ready": False}
+    # `seq` (per-node ordering stamp) and `go_live_ok` (may THIS machine deliver a stream key to
+    # that OBS) are consumer extras this integration has no use for — the contract only requires
+    # that they are tolerated. `go_live_ok` is not surfaced: the HA box never sends a stream key.
+    assert "go_live_ok" not in inst
 
 
 def test_api_state_tolerates_an_empty_snapshot() -> None:
@@ -516,3 +552,23 @@ def test_redacted_frames_keep_their_shape() -> None:
     assert any(f["value"] for f in redacted if f["type"] == "rule_fired")
     assert any(f["text"] == "" for f in redacted if f["type"] == "overlay_alert")
     assert any(f["text"] for f in redacted if f["type"] == "overlay_alert")
+
+
+def test_chat_message_is_redacted_not_withheld() -> None:
+    """docs/HA.md `twitch_chat_message`: the frame ALWAYS arrives, and `author` / `text` are
+    `null` (not "" and not absent) unless both the app's `full` detail setting and the
+    `read_events_sensitive` scope hold. Both forms must be in the fixture so a `str` assumption
+    anywhere in the consumer is caught (SB-E-034)."""
+    chat = [f for f in DOCUMENTED_EVENTS if f["type"] == "twitch_chat_message"]
+    assert len(chat) == 2
+    for frame in chat:
+        assert {"connection_id", "channel", "author", "text", "action", "first"} <= set(frame)
+    assert any(f["author"] is None and f["text"] is None for f in chat)
+    assert any(isinstance(f["author"], str) and isinstance(f["text"], str) for f in chat)
+
+
+def test_peer_obs_rows_carry_go_live_ok() -> None:
+    """`go_live_ok` (2026-09-02) sits on every `obs` row — `/api/state` AND `peer_state_changed`."""
+    peer = next(f for f in DOCUMENTED_EVENTS if f["type"] == "peer_state_changed")
+    assert all("go_live_ok" in row for row in peer["obs"])
+    assert all("go_live_ok" in row for row in API_STATE["obs"])

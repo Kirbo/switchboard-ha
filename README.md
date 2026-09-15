@@ -143,6 +143,36 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 > to be the shipped default, an **existing** entry configured that way now stops loading and raises a
 > repair telling you to reconfigure. Paste the fingerprint and it starts again.
 
+> **Fingerprint mismatch.** If the host ever presents a certificate that does *not* match the pinned
+> fingerprint — Switchboard's identity was rotated (a reinstall, a mesh identity reset), or another
+> device on your network is answering in its place — the integration logs one warning per outage
+> with the fingerprint it saw, raises a repair, and keeps retrying with the *pinned* one. It never
+> adopts a new fingerprint on its own. If you rotated it yourself, **Reconfigure** and paste the new
+> fingerprint from the Peers tab; if you didn't, treat the repair as a warning.
+
+### Options
+
+**Settings → Devices & Services → Switchboard → Configure** (the gear on the entry):
+
+| Option | Default | Notes |
+|---|---|---|
+| **Mirror chat text onto the event bus** | off | With it off, `twitch_chat_message` still reaches the HA bus for every chat line — so chat can be counted — but with `author` and `text` set to `null`. Turn it on to receive the names and the words (they still need the `read_events_sensitive` scope and the app's `full` chat-detail setting). |
+
+> **Why off by default.** Home Assistant's recorder stores every custom event that isn't excluded
+> (`events` / `event_data`, kept for `purge_keep_days`, 10 by default). Re-firing chat verbatim would
+> build a per-line archive of who said what on your HA box — the archive Switchboard itself refuses
+> to write to its own log under any setting. The same is true of everything else this integration
+> re-fires: `twitch_chat_command`, the resub/cheer messages inside `twitch_event`, `rule_fired`
+> values. If you want *nothing* from Switchboard archived, exclude the event type in your
+> `configuration.yaml` — automations still trigger on it, only the recorder ignores it:
+>
+> ```yaml
+> recorder:
+>   exclude:
+>     event_types:
+>       - switchboard_event
+> ```
+
 > **Token kind.** Paste the **global** External API token (Settings → External API). The per-plugin
 > token from Switchboard's pairing Grant flow also authenticates, but it is scope-limited: the
 > `ha_*` actions behind `switchboard.light_flash` are global-token-only, so pairing would give you
@@ -158,7 +188,8 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 > corresponding sensors and event triggers simply never fire, and `rule_fired` / `overlay_alert`
 > arrive with their text emptied (see the bus-event note above). `twitch_chat_message` behaves the
 > same way as those two rather than vanishing: it always reaches the HA bus so chat can be counted,
-> but without the scope its `author` and `text` are `null`. Tokens paired before the split keep the
+> but without the scope its `author` and `text` are `null` — and this integration nulls them itself
+> unless the **Mirror chat text** option is on (see Options). Tokens paired before the split keep the
 > scope automatically; new ones need it ticked on the plugin's card in Switchboard.
 
 ## Notes

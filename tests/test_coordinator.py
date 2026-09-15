@@ -9,7 +9,11 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.switchboard import coordinator as coord_mod
-from custom_components.switchboard.const import DOMAIN, EVENT_SWITCHBOARD
+from custom_components.switchboard.const import (
+    CONF_MIRROR_CHAT_TEXT,
+    DOMAIN,
+    EVENT_SWITCHBOARD,
+)
 from custom_components.switchboard.coordinator import (
     SwitchboardCoordinator,
     _state_from_snapshot,
@@ -32,8 +36,10 @@ CONNECTIONS = [
 ]
 
 
-def make_coordinator(hass: HomeAssistant) -> SwitchboardCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={})
+def make_coordinator(
+    hass: HomeAssistant, options: dict[str, Any] | None = None
+) -> SwitchboardCoordinator:
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options=options or {})
     entry.add_to_hass(hass)
     client = FakeClient(state=API_STATE, connections=list(CONNECTIONS), afk=API_AFK)
     coord = SwitchboardCoordinator(hass, entry, client)  # type: ignore[arg-type]
@@ -93,6 +99,60 @@ async def test_every_frame_is_refired_on_the_bus(hass: HomeAssistant) -> None:
     # Compare as a multiset: HA dispatches non-callback listeners as jobs, so delivery order
     # isn't guaranteed — what matters is that no frame is dropped on the way to the bus.
     assert sorted(f["type"] for f in seen) == sorted(f["type"] for f in DOCUMENTED_EVENTS)
+
+
+CHAT_FRAME: dict[str, Any] = {
+    "type": "twitch_chat_message",
+    "connection_id": CID,
+    "channel": "kirbownd",
+    "author": "mothlamp_99",
+    "text": "hello chat",
+    "action": False,
+    "first": False,
+}
+
+
+async def _bus_frames(hass: HomeAssistant, coord: SwitchboardCoordinator) -> list[dict[str, Any]]:
+    seen: list[dict[str, Any]] = []
+    hass.bus.async_listen(EVENT_SWITCHBOARD, lambda e: seen.append(dict(e.data)))
+    coord._handle_frame(dict(CHAT_FRAME))
+    await hass.async_block_till_done()
+    return seen
+
+
+async def test_chat_text_is_stripped_from_the_bus_by_default(hass: HomeAssistant) -> None:
+    """SB-D-022: HA's recorder archives every non-excluded custom event for `purge_keep_days`,
+    so re-firing `twitch_chat_message` verbatim builds a per-line archive of who said what on
+    the HA box — the archive the app refuses to write to its own log under any setting. The
+    frame still fires (chat stays countable), with `author`/`text` as null — the contract's own
+    redacted shape."""
+    seen = await _bus_frames(hass, make_coordinator(hass))
+    assert len(seen) == 1
+    assert seen[0]["type"] == "twitch_chat_message"
+    assert seen[0]["author"] is None
+    assert seen[0]["text"] is None
+    # Everything else is untouched — a counter keyed on channel/first still works.
+    assert seen[0]["channel"] == "kirbownd"
+    assert seen[0]["first"] is False
+
+
+async def test_chat_text_reaches_the_bus_with_the_option_on(hass: HomeAssistant) -> None:
+    seen = await _bus_frames(hass, make_coordinator(hass, {CONF_MIRROR_CHAT_TEXT: True}))
+    assert len(seen) == 1
+    assert seen[0]["author"] == "mothlamp_99"
+    assert seen[0]["text"] == "hello chat"
+
+
+async def test_chat_redaction_does_not_touch_other_events(hass: HomeAssistant) -> None:
+    """Only the chat event is redacted here; `twitch_chat_command` and the rest stay verbatim
+    (they are scope-gated by the app, and they are what the README documents as recorded)."""
+    coord = make_coordinator(hass)
+    seen: list[dict[str, Any]] = []
+    hass.bus.async_listen(EVENT_SWITCHBOARD, lambda e: seen.append(dict(e.data)))
+    command = next(f for f in DOCUMENTED_EVENTS if f["type"] == "twitch_chat_command")
+    coord._handle_frame(dict(command))
+    await hass.async_block_till_done()
+    assert seen == [command]
 
 
 async def test_obs_events_patch_the_instance(hass: HomeAssistant) -> None:

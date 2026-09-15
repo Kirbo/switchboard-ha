@@ -20,7 +20,12 @@ from custom_components.switchboard.config_flow import (
     STEP_USER_SCHEMA,
     SwitchboardConfigFlow,
 )
-from custom_components.switchboard.const import CONF_FINGERPRINT, DOMAIN
+from custom_components.switchboard.const import (
+    CONF_FINGERPRINT,
+    CONF_MIRROR_CHAT_TEXT,
+    DOMAIN,
+    ISSUE_FINGERPRINT_MISMATCH,
+)
 
 from .conftest import FakeClient
 
@@ -135,3 +140,46 @@ async def test_reconfigure_saves_when_host_and_port_are_unchanged(hass):
     )
     assert entry.data[CONF_FINGERPRINT] == FINGERPRINT
     assert entry.data[CONF_TOKEN] == "new-token"
+
+
+async def test_options_flow_defaults_chat_text_off_and_persists_the_choice(hass):
+    """SB-D-022: `mirror_chat_text` is an entry OPTION, off by default, and the form persists
+    what the user picks. The coordinator reads `entry.options` live, so no reload is asserted."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="192.168.1.56:38474",
+        data={
+            CONF_HOST: "192.168.1.56",
+            CONF_PORT: 38474,
+            CONF_TOKEN: "token",
+            CONF_VERIFY_SSL: False,
+            CONF_FINGERPRINT: FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+    schema_default = next(
+        k.default() for k in result["data_schema"].schema if k.schema == CONF_MIRROR_CHAT_TEXT
+    )
+    assert schema_default is False, "chat text must be opt-IN"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_MIRROR_CHAT_TEXT: True}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {CONF_MIRROR_CHAT_TEXT: True}
+
+
+def test_the_option_and_the_issue_have_user_facing_strings():
+    """A translation key that is missing renders as the raw key in the UI — silently."""
+    for name in ("strings.json", "translations/en.json"):
+        strings = json.loads((COMPONENT / name).read_text())
+        assert CONF_MIRROR_CHAT_TEXT in strings["options"]["step"]["init"]["data"]
+        assert CONF_MIRROR_CHAT_TEXT in strings["options"]["step"]["init"]["data_description"]
+        issue = strings["issues"][ISSUE_FINGERPRINT_MISMATCH]
+        assert "{host}" in issue["description"]
+        assert "{seen_fingerprint}" in issue["description"]
+        assert "Reconfigure" in issue["description"]

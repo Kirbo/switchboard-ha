@@ -1,11 +1,17 @@
-"""Config flow for Switchboard: initial setup, reauth (token), and reconfigure."""
+"""Config flow for Switchboard: initial setup, reauth (token), reconfigure, and options."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN, CONF_VERIFY_SSL
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     TextSelector,
@@ -20,7 +26,7 @@ from .api import (
     SwitchboardAuthError,
     SwitchboardClient,
 )
-from .const import CONF_FINGERPRINT, DEFAULT_PORT, DOMAIN
+from .const import CONF_FINGERPRINT, CONF_MIRROR_CHAT_TEXT, DEFAULT_PORT, DOMAIN
 
 # The token is a PASSWORD field, not plain text (SB-A-059). Home Assistant renders a plain `str`
 # in the clear, and `add_suggested_values_to_schema` below pre-fills it with the STORED value — so
@@ -41,11 +47,21 @@ STEP_USER_SCHEMA = vol.Schema(
 
 STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_TOKEN): _TOKEN_SELECTOR})
 
+# Options. `mirror_chat_text` defaults OFF (SB-D-022): with it off, `twitch_chat_message` reaches
+# the HA bus with `author`/`text` nulled so the recorder never archives chat lines; the event still
+# fires so chat can be counted. See `coordinator._bus_frame`.
+STEP_OPTIONS_SCHEMA = vol.Schema({vol.Required(CONF_MIRROR_CHAT_TEXT, default=False): bool})
+
 
 class SwitchboardConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle adding, reauthenticating, and reconfiguring a Switchboard instance."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> SwitchboardOptionsFlow:
+        return SwitchboardOptionsFlow()
 
     async def _async_validate(self, data: dict[str, Any]) -> str | None:
         """Try one authenticated call with the given config; return an error key or None.
@@ -168,4 +184,18 @@ class SwitchboardConfigFlow(ConfigFlow, domain=DOMAIN):
                 {k: v for k, v in (user_input or dict(entry.data)).items() if k != CONF_TOKEN},
             ),
             errors=errors,
+        )
+
+
+class SwitchboardOptionsFlow(OptionsFlow):
+    """Per-entry options. Read live by the coordinator (`entry.options`) — no reload needed."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                STEP_OPTIONS_SCHEMA, dict(self.config_entry.options)
+            ),
         )

@@ -52,10 +52,27 @@
       "reconfigure_successful": "Reconfiguration was successful."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Switchboard options",
+        "data": {
+          "mirror_chat_text": "Mirror chat text onto the event bus"
+        },
+        "data_description": {
+          "mirror_chat_text": "Off by default: twitch_chat_message events reach the Home Assistant bus with author and text set to null, so chat can be counted without the recorder archiving every line of who said what. Turn on to receive the names and the words (they still require the read_events_sensitive scope and the app's full chat detail setting)."
+        }
+      }
+    }
+  },
   "issues": {
     "insecure_tls": {
       "title": "Switchboard connection is not authenticatable",
       "description": "The Switchboard entry for **{host}** has certificate verification turned off and no TLS fingerprint pinned. Switchboard uses a self-signed certificate, so with neither of those the connection cannot be authenticated and anyone on your network could read the API token as it is sent — a token that can control OBS, post to your Twitch chat and call Home Assistant services.\n\nThis combination used to be the default, so entries created before this version are affected. The integration will not load until it is fixed.\n\nTo fix it: open the Switchboard integration, choose **Reconfigure**, and paste the TLS fingerprint from Switchboard's **Peers** tab (or turn on certificate verification if you front the app with a trusted certificate)."
+    },
+    "fingerprint_mismatch": {
+      "title": "Switchboard TLS fingerprint does not match",
+      "description": "The host **{host}** presented a TLS certificate with SHA-256 fingerprint `{seen_fingerprint}`, which is not the one pinned for this entry. Either Switchboard's identity was rotated (a reinstall, a mesh identity reset) or another device on your network is answering in its place. The integration will not trust the new certificate on its own: its entities stay unavailable and it keeps retrying with the pinned fingerprint.\n\nIf you rotated Switchboard's identity yourself: open the Switchboard integration, choose **Reconfigure**, and paste the new fingerprint from Switchboard's **Peers** tab — confirm it there, never from this message alone. If you did not, treat this as a warning that something else is on the wire."
     }
   },
   "services": {

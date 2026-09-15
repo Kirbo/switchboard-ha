@@ -17,6 +17,7 @@ from typing import Any
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -26,8 +27,10 @@ from .api import (
     SwitchboardClient,
 )
 from .const import (
+    CONF_MIRROR_CHAT_TEXT,
     DOMAIN,
     EVENT_SWITCHBOARD,
+    ISSUE_FINGERPRINT_MISMATCH,
     SPOTIFY_PAUSED,
     SPOTIFY_PLAYING,
     SPOTIFY_STOPPED,
@@ -245,6 +248,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # Once-per-outage log gates — reset after a fully successful connect (ws + resync).
         self._access_denied_logged = False
         self._reauth_logged = False
+        self._fingerprint_mismatch_logged = False
 
     async def _async_update_data(self) -> SwitchboardData:
         try:
@@ -366,6 +370,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                     await self._resync()
                     self._access_denied_logged = False
                     self._reauth_logged = False
+                    self._clear_fingerprint_mismatch()
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
@@ -394,6 +399,10 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             except SwitchboardAccessError:
                 # The resync REST calls got a 403 — the token is fine but an ACL denies us.
                 self._log_access_denied()
+            except aiohttp.ServerFingerprintMismatch as err:
+                # BEFORE the generic ClientError arm below, which used to swallow this at DEBUG
+                # (SB-E-033): the pinned certificate no longer matches what the host presents.
+                self._log_fingerprint_mismatch(err)
             except (TimeoutError, aiohttp.ClientError, SwitchboardApiError) as err:
                 _LOGGER.debug("switchboard: events websocket dropped: %s", err)
             except Exception:  # this task must never die; entities freeze if it does
@@ -430,6 +439,50 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             "Settings → External API; entities stay unavailable until access is restored"
         )
 
+    def _fingerprint_issue_id(self) -> str:
+        return f"{ISSUE_FINGERPRINT_MISMATCH}_{self.entry.entry_id}"
+
+    def _log_fingerprint_mismatch(self, err: aiohttp.ServerFingerprintMismatch) -> None:
+        """The host answered with a certificate whose SHA-256 is not the pinned one.
+
+        Either Switchboard rotated its identity (a `mesh_identity_reset`, a reinstall) or something
+        on the LAN is answering in its place — the integration cannot tell which, so it NEVER
+        adopts the new digest on its own: the entry stays unavailable and retries with backoff
+        until a human pastes the new fingerprint via Reconfigure. Warn once per outage (the retry
+        loop would repeat it every backoff step) and raise a repairs issue so it is visible in the
+        UI rather than only in a DEBUG log nobody has enabled.
+        """
+        seen = err.got.hex()
+        if self._fingerprint_mismatch_logged:
+            return
+        self._fingerprint_mismatch_logged = True
+        _LOGGER.warning(
+            "switchboard: TLS fingerprint mismatch for %s:%s — the host presented a certificate "
+            "with SHA-256 %s, which is not the pinned one; entities stay unavailable until the "
+            "entry is reconfigured with a fingerprint confirmed on Switchboard's Peers tab",
+            err.host,
+            err.port,
+            seen,
+        )
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._fingerprint_issue_id(),
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=ISSUE_FINGERPRINT_MISMATCH,
+            translation_placeholders={
+                "host": str(err.host),
+                "seen_fingerprint": seen,
+            },
+        )
+
+    def _clear_fingerprint_mismatch(self) -> None:
+        """A socket opened AND the resync went through with the pinned certificate — whatever
+        was answering with the wrong one is gone (or the user pasted the new pin)."""
+        self._fingerprint_mismatch_logged = False
+        ir.async_delete_issue(self.hass, DOMAIN, self._fingerprint_issue_id())
+
     async def _resync(self) -> None:
         """Re-fetch connections + the full snapshot and replace self.data — run on every ws
         connect to recover anything missed while disconnected. Raises on failure so the caller
@@ -452,9 +505,25 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
     @callback
     def _handle_frame(self, frame: dict[str, Any]) -> None:
         # Re-fire raw frame for user automations regardless of whether it touches an entity.
-        self.hass.bus.async_fire(EVENT_SWITCHBOARD, frame)
+        self.hass.bus.async_fire(EVENT_SWITCHBOARD, self._bus_frame(frame))
         if self._apply(frame):
             self.async_set_updated_data(self.data)
+
+    def _bus_frame(self, frame: dict[str, Any]) -> dict[str, Any]:
+        """What actually goes on the HA bus for one frame.
+
+        `twitch_chat_message` is the one event redacted HERE, not by the app: HA's recorder stores
+        every non-excluded custom event (`events` / `event_data`, kept for `purge_keep_days`), so
+        re-firing chat verbatim builds a per-line archive of who said what on the HA box — the
+        archive the app refuses to write to its own log under any setting (SB-D-022). The frame
+        still fires (with `author`/`text` as null, the contract's own redacted shape) so chat can
+        be counted; the `mirror_chat_text` option opts back in for users who want the words.
+        """
+        if frame.get("type") != "twitch_chat_message":
+            return frame
+        if self.entry.options.get(CONF_MIRROR_CHAT_TEXT, False):
+            return frame
+        return {**frame, "author": None, "text": None}
 
     @callback
     def _apply(self, frame: dict[str, Any]) -> bool:
