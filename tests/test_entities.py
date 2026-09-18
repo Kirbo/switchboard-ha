@@ -68,6 +68,10 @@ async def test_entities_are_created_from_the_snapshot(hass: HomeAssistant) -> No
     assert spotify.attributes["up_next_title"] == "Next"
     assert "position_ms" not in spotify.attributes
 
+    overlays = hass.states.get(f"binary_sensor.{hub}_input_overlays_visible")
+    assert overlays.state == "off"
+    assert overlays.attributes["auto_show_at"] == "2023-11-14T22:18:20+00:00"
+
     afk = hass.states.get(f"binary_sensor.{hub}_afk")
     assert afk.state == "off"
     assert afk.attributes["threshold_secs"] == 180

@@ -271,6 +271,20 @@
           "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
       }
+    },
+    "set_input_overlay_visible": {
+      "name": "Show/hide input overlays",
+      "description": "The cutscene switch: hide every input overlay (keyboard, mouse, gamepad) on the stream, show them again, or toggle. Switchboard's own auto-show setting brings them back if forgotten.",
+      "fields": {
+        "visible": {
+          "name": "Visible",
+          "description": "true = show, false = hide, toggle = flip (default)."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
     }
   }
 }

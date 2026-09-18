@@ -3,6 +3,7 @@
 A generic `run_action` passthrough (forward-compatible with the additive action list in
 docs/HA.md) plus typed conveniences for the actions worth a proper UI: `obs_scene_set`,
 `twitch_go_live`, `overlay_alert_show`, `machine_state_set`, `ha_light_flash`, `afk_snooze`,
+`input_overlay_show`/`_hide`/`_toggle`,
 `afk_reset_idle`.
 `ha_light_flash` (like `ha_service_call` and `discord_webhook_send`) requires the **global**
 External API token — a scope-limited plugin token cannot call it.
@@ -33,6 +34,7 @@ SERVICE_SET_MACHINE_STATE = "set_machine_state"
 SERVICE_LIGHT_FLASH = "light_flash"
 SERVICE_AFK_SNOOZE = "afk_snooze"
 SERVICE_AFK_RESET_IDLE = "afk_reset_idle"
+SERVICE_SET_INPUT_OVERLAY_VISIBLE = "set_input_overlay_visible"
 SERVICE_SET_VARIABLE = "set_variable"
 SERVICE_ADD_TO_VARIABLE = "add_to_variable"
 
@@ -57,6 +59,7 @@ ATTR_ON_MS = "on_ms"
 ATTR_OFF_MS = "off_ms"
 ATTR_TRANSITION_MS = "transition_ms"
 ATTR_SECONDS = "seconds"
+ATTR_VISIBLE = "visible"
 
 # Every service takes an optional entry_id so a specific Switchboard instance can be addressed
 # when several machines are configured (without it, the first entry wins).
@@ -140,6 +143,14 @@ AFK_SNOOZE_SCHEMA = vol.Schema(
 )
 
 AFK_RESET_IDLE_SCHEMA = vol.Schema(dict(_ENTRY_FIELD))
+# `visible` is a string on purpose: HA's boolean selector can't express the third value, and
+# `toggle` is what a single automation button wants.
+SET_INPUT_OVERLAY_VISIBLE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_VISIBLE, default="toggle"): vol.In(["true", "false", "toggle"]),
+        **_ENTRY_FIELD,
+    }
+)
 
 # ha_flash keys forwarded verbatim when supplied (the app defaults anything omitted).
 _FLASH_KEYS = (
@@ -317,6 +328,15 @@ def async_register_services(hass: HomeAssistant) -> None:
         )
         coord.schedule_afk_refresh()
 
+    async def handle_set_input_overlay_visible(call: ServiceCall) -> None:
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+        action = {
+            "true": "input_overlay_show",
+            "false": "input_overlay_hide",
+            "toggle": "input_overlay_toggle",
+        }[call.data[ATTR_VISIBLE]]
+        await _send(coord, {"action_type": action, "value": ""})
+
     async def handle_afk_reset_idle(call: ServiceCall) -> None:
         coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
         await _send(coord, {"action_type": "afk_reset_idle", "value": ""})
@@ -349,4 +369,10 @@ def async_register_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_AFK_RESET_IDLE, handle_afk_reset_idle, schema=AFK_RESET_IDLE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_INPUT_OVERLAY_VISIBLE,
+        handle_set_input_overlay_visible,
+        schema=SET_INPUT_OVERLAY_VISIBLE_SCHEMA,
     )

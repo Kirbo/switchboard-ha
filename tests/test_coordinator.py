@@ -411,3 +411,27 @@ async def test_a_needs_reauth_flip_pushes_to_entities(hass: HomeAssistant) -> No
     await hass.async_block_till_done()
     assert [r["label"] for r in coord.reauth_needed()] == ["Main"]
     assert updates >= 1
+
+
+async def test_input_overlay_visibility_event_drives_the_flag(hass: HomeAssistant) -> None:
+    """The cutscene switch: the event carries the flag + the app's auto-show time. The contract
+    snapshot seeds it hidden-with-a-timer; an older app's snapshot (no field) reads as shown."""
+    coord = make_coordinator(hass)
+    assert coord.data.input_overlay_visible is False
+    assert coord.data.input_overlay_auto_show_at_ms == 1700000300000
+    assert coord._apply(
+        {"type": "input_overlay_visibility", "visible": True, "auto_show_at_ms": None}
+    )
+    assert coord.data.input_overlay_visible is True
+    assert coord.data.input_overlay_auto_show_at_ms is None
+    assert coord._apply(
+        {
+            "type": "input_overlay_visibility",
+            "visible": False,
+            "auto_show_at_ms": 1700000300000,
+            "source": "OpenDeck",
+        }
+    )
+    assert coord.data.input_overlay_visible is False
+    assert coord.data.input_overlay_auto_show_at_ms == 1700000300000
+    assert _state_from_snapshot({}).input_overlay_visible is True

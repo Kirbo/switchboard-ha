@@ -66,6 +66,12 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     {"type": "machine_state_changed", "state": "afk", "source": "External API"},
     {"type": "variable_changed", "name": "deaths", "value": "5"},
     {"type": "overlay_countdown", "ends_at_ms": 1700000000000, "label": "Starting soon"},
+    {
+        "type": "input_overlay_visibility",
+        "visible": False,
+        "auto_show_at_ms": 1700000300000,
+        "source": "OpenDeck",
+    },
     {"type": "hotkey_pressed", "combo": "KEY_LEFTCTRL+KEY_M"},
     {"type": "obs_disk_space", "connection_id": CID, "free_mb": 12698, "low": True},
     {
@@ -383,6 +389,8 @@ API_STATE: dict[str, Any] = {
         "watched_running": False,
     },
     "variables": {"deaths": "3", "mode": "gaming"},
+    "input_overlay_visible": False,
+    "input_overlay_auto_show_at_ms": 1700000300000,
     "version": "2026.6.10",
     "update": {"version": "2026.7.1", "body": "notes", "ready": False},
 }
@@ -438,6 +446,8 @@ def test_api_state_maps_every_documented_field() -> None:
     assert data.variables == {"deaths": "3", "mode": "gaming"}
 
     assert data.afk is False  # machine_state "active"
+    assert data.input_overlay_visible is False
+    assert data.input_overlay_auto_show_at_ms == 1700000300000
     assert data.focused_app == "steam_app_599140"
     assert data.running_apps == ["steam_app_599140"]
     assert data.watched_focused is True

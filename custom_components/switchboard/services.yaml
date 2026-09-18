@@ -232,3 +232,20 @@ afk_reset_idle:
       selector:
         config_entry:
           integration: switchboard
+
+set_input_overlay_visible:
+  fields:
+    visible:
+      required: false
+      default: toggle
+      selector:
+        select:
+          options:
+            - "true"
+            - "false"
+            - toggle
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard

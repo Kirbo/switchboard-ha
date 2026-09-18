@@ -31,6 +31,7 @@ async def async_setup_entry(
     coordinator: SwitchboardCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[BinarySensorEntity] = [
         SwitchboardAfkSensor(coordinator, entry),
+        SwitchboardInputOverlaySensor(coordinator, entry),
         SwitchboardAppActiveSensor(coordinator, entry),
         UpdateAvailableSensor(coordinator, entry),
         NeedsReauthSensor(coordinator, entry),
@@ -91,6 +92,35 @@ class SwitchboardAfkSensor(SwitchboardHubEntity, BinarySensorEntity):
             "threshold_secs": data.afk_threshold_secs,
             "snooze_until": (
                 None if until is None else datetime.fromtimestamp(until / 1000, tz=UTC).isoformat()
+            ),
+        }
+
+
+class SwitchboardInputOverlaySensor(SwitchboardHubEntity, BinarySensorEntity):
+    """Whether the input overlays (keyboard / mouse / gamepad pages) are shown on the stream.
+
+    Off = hidden by the cutscene switch (`switchboard.set_input_overlay_visible`, a deck key, a
+    rule). `auto_show_at` = when Switchboard's own auto-show timer brings them back (`None` =
+    no timer armed).
+    """
+
+    _attr_name = "Input overlays visible"
+    _attr_icon = "mdi:keyboard-outline"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_input_overlay_visible"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator.data.input_overlay_visible)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        at = self.coordinator.data.input_overlay_auto_show_at_ms
+        return {
+            "auto_show_at": (
+                None if at is None else datetime.fromtimestamp(at / 1000, tz=UTC).isoformat()
             ),
         }
 

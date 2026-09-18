@@ -94,6 +94,11 @@ class SwitchboardData:
     # `variables` and kept live by `variable_changed` — the README promises `data["variables"]`
     # to template sensors, and until 2026-09-02 nothing populated it.
     variables: dict[str, str] = field(default_factory=dict)
+    # The keyboard/mouse/gamepad input overlays are shown (2026-09-19, additive on /api/state;
+    # absent on older apps = shown). `input_overlay_auto_show_at_ms` = when the app's own
+    # auto-show timer brings them back (None = no timer). Kept live by `input_overlay_visibility`.
+    input_overlay_visible: bool = True
+    input_overlay_auto_show_at_ms: int | None = None
 
     @property
     def watched_app_active(self) -> bool:
@@ -220,6 +225,8 @@ def _state_from_snapshot(
         watched_focused=bool(apps.get("watched_focused")),
         watched_running=bool(apps.get("watched_running")),
         variables={str(k): str(v) for k, v in (raw.get("variables") or {}).items()},
+        input_overlay_visible=raw.get("input_overlay_visible", True) is not False,
+        input_overlay_auto_show_at_ms=raw.get("input_overlay_auto_show_at_ms"),
         # Preserved across a resync — /api/state doesn't carry them, /api/afk does.
         afk_threshold_secs=previous.afk_threshold_secs if previous else None,
         afk_snooze_until_ms=previous.afk_snooze_until_ms if previous else None,
@@ -615,6 +622,13 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             inst = data.twitch.setdefault(cid, {})
             inst["followers"] = frame.get("followers")
             inst["subs"] = frame.get("subs")
+            return True
+
+        if etype == "input_overlay_visibility":
+            # The cutscene switch flipped (a deck key, a rule, the app, or its auto-show timer).
+            data.input_overlay_visible = frame.get("visible") is not False
+            at = frame.get("auto_show_at_ms")
+            data.input_overlay_auto_show_at_ms = at if isinstance(at, int) else None
             return True
 
         if etype == "variable_changed":

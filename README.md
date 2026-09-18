@@ -18,7 +18,10 @@ entities, and lets HA drive Switchboard actions through services.
 - **Binary sensors** — per OBS connection: `Connected`, `Streaming`, `Recording`; per Twitch
   connection: `Live`; global: `AFK` (attributes: `threshold_secs` — how long idle before the
   idle→AFK automation fires, with any per-scene override applied, `null` = never — and
-  `snooze_until`), `Watched app active` (app-detection — a watched app is focused *or* running),
+  `snooze_until`), `Input overlays visible` (the keyboard/mouse/gamepad overlays are shown on
+  the stream — off while hidden by the cutscene switch; attribute `auto_show_at` = when
+  Switchboard's auto-show timer brings them back), `Watched app active` (app-detection — a
+  watched app is focused *or* running),
   `Update available`, `Connection needs re-authentication` (a diagnostic **problem** sensor: on
   while any Switchboard connection's own credential was rejected by its provider — a revoked
   Twitch refresh token, a Home Assistant long-lived token answered with `auth_invalid`. That is
@@ -63,6 +66,10 @@ entities, and lets HA drive Switchboard actions through services.
   Repeated calls stack (capped at 4 h); `0` cancels.
 - `switchboard.afk_reset_idle` — "I'm still here": reset Switchboard's idle clock without
   synthesizing input.
+- `switchboard.set_input_overlay_visible` — the cutscene switch: `visible: "false"` hides every
+  input overlay (keyboard, mouse, gamepad) on the stream, `"true"` shows them, `"toggle"`
+  (default) flips. Needs a Switchboard build from 2026-09-19 or newer; the `Input overlays
+  visible` binary sensor mirrors the result.
 - `switchboard.light_flash` — blink a light or light group N times in a colour through
   *Switchboard's own* downstream Home Assistant connection, then restore its previous state.
   Like every `ha_*` action this needs the **global** External API token, not a paired-plugin one.

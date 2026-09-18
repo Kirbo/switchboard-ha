@@ -161,6 +161,22 @@ async def test_afk_services(hass: HomeAssistant) -> None:
     }
 
 
+async def test_set_input_overlay_visible_maps_to_the_three_actions(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    for visible, action in (
+        ("false", "input_overlay_hide"),
+        ("true", "input_overlay_show"),
+        ("toggle", "input_overlay_toggle"),
+    ):
+        await _call(hass, "set_input_overlay_visible", {"visible": visible})
+        assert _client(hass, entry.entry_id).commands[-1] == {"action_type": action, "value": ""}
+    # The default is a toggle — one automation button, no state to track.
+    await _call(hass, "set_input_overlay_visible", {})
+    assert _client(hass, entry.entry_id).commands[-1]["action_type"] == "input_overlay_toggle"
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "set_input_overlay_visible", {"visible": "maybe"})
+
+
 async def test_a_rejected_command_raises(hass: HomeAssistant) -> None:
     entry = await _setup(hass)
     _client(hass, entry.entry_id).result = {"ok": False, "error": "nope"}
