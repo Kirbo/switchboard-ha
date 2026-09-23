@@ -671,7 +671,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # obs_scene_renamed, obs_launched_local, obs_stream_health, twitch_chat_command,
         # mesh_identity_reset, plugin_paired/removed,
         # spotify_song_liked/spotify_playlist_track_added, insights_session_ended,
-        # obs_input_mute_changed, twitch_clip_created, obs_disk_space,
+        # obs_input_mute_changed, twitch_clip_created, obs_disk_space, obs_stream_stalled,
         # overlay_countdown, hotkey_pressed, twitch_chat_message)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
         #
@@ -709,6 +709,10 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # floor. Same reasoning as obs_stream_health: it is state, but /api/state carries no disk
         # field, so an entity would sit at an invented value after a restart. Automate on the
         # event — "recording disk low" is exactly the notification HA is good at.
+        #
+        # obs_stream_stalled says a live OBS output sent nothing for ~15 s and the app restarted
+        # it (`restarted: true`) or gave up (`restarted: false`). Momentary by definition — the
+        # restart already happened — so no entity; the give-up edge is the one to notify on.
         #
         # obs_input_mute_changed says an OBS audio input was muted/unmuted. Like obs_stream_health
         # it IS a persisting state, but /api/state carries no mute field, so an entity would have
