@@ -41,6 +41,19 @@ obs_scene_set:
         config_entry:
           integration: switchboard
 
+apply_scene_stream_info:
+  fields:
+    target:
+      required: true
+      example: Gaming
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
+
 go_live:
   fields:
     account_id:

@@ -120,6 +120,20 @@
         }
       }
     },
+    "apply_scene_stream_info": {
+      "name": "Apply scene Stream Info",
+      "description": "Re-apply the Twitch Stream Info (title, category, language, tags, labels) mapped to an OBS connection's current scene — the same as switching to that scene. No-op when the scene has no mapping.",
+      "fields": {
+        "target": {
+          "name": "OBS connection",
+          "description": "OBS connection label or id whose current scene's mapping to apply."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
     "go_live": {
       "name": "Go live",
       "description": "Fetch a Twitch account's stream key, set it on the target OBS and start its stream as one operation, then make that account Switchboard's default. Needs the twitch_control scope — a 403 means the token lacks it (grant the scope to the paired plugin, or use the global External API token).",

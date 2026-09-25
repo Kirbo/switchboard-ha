@@ -35,6 +35,18 @@ async def test_obs_scene_set_resolves_a_label(hass: HomeAssistant) -> None:
     }
 
 
+async def test_apply_scene_stream_info_targets_the_obs_connection(hass: HomeAssistant) -> None:
+    """Re-apply the Stream Info mapped to the OBS connection's current scene: the app reads the
+    scene itself, so the command carries only the (label-resolved) OBS target."""
+    entry = await _setup(hass)
+    await _call(hass, "apply_scene_stream_info", {"target": "Home OBS"})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "twitch_stream_info_apply",
+        "target_connection_id": OBS_CONN,
+        "value": "",
+    }
+
+
 async def test_go_live_resolves_labels_for_account_and_obs(hass: HomeAssistant) -> None:
     entry = await _setup(hass)
     await _call(hass, "go_live", {"account_id": "Main", "obs_id": "Home OBS"})

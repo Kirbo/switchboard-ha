@@ -29,6 +29,7 @@ from .const import DOMAIN
 SERVICE_RUN_ACTION = "run_action"
 SERVICE_OBS_SCENE_SET = "obs_scene_set"
 SERVICE_GO_LIVE = "go_live"
+SERVICE_APPLY_SCENE_STREAM_INFO = "apply_scene_stream_info"
 SERVICE_OVERLAY_ALERT = "overlay_alert"
 SERVICE_SET_MACHINE_STATE = "set_machine_state"
 SERVICE_LIGHT_FLASH = "light_flash"
@@ -79,6 +80,15 @@ OBS_SCENE_SET_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_TARGET): cv.string,
         vol.Required(ATTR_SCENE): cv.string,
+        **_ENTRY_FIELD,
+    }
+)
+
+# `twitch_stream_info_apply` — re-apply the Twitch Stream Info mapped to the OBS connection's
+# CURRENT scene (title, category, language, tags, labels), as a scene switch would. Target only.
+APPLY_SCENE_STREAM_INFO_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_TARGET): cv.string,
         **_ENTRY_FIELD,
     }
 )
@@ -240,6 +250,17 @@ def async_register_services(hass: HomeAssistant) -> None:
             },
         )
 
+    async def handle_apply_scene_stream_info(call: ServiceCall) -> None:
+        coord, target_id = _pick(hass, call.data[ATTR_TARGET], call.data[ATTR_ENTRY_ID])
+        await _send(
+            coord,
+            {
+                "action_type": "twitch_stream_info_apply",
+                "target_connection_id": target_id,
+                "value": "",
+            },
+        )
+
     async def handle_go_live(call: ServiceCall) -> None:
         coord, account_id = _pick(hass, call.data[ATTR_ACCOUNT_ID], call.data[ATTR_ENTRY_ID])
         payload: dict[str, Any] = {
@@ -347,6 +368,12 @@ def async_register_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_OBS_SCENE_SET, handle_obs_scene_set, schema=OBS_SCENE_SET_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_APPLY_SCENE_STREAM_INFO,
+        handle_apply_scene_stream_info,
+        schema=APPLY_SCENE_STREAM_INFO_SCHEMA,
     )
     hass.services.async_register(DOMAIN, SERVICE_GO_LIVE, handle_go_live, schema=GO_LIVE_SCHEMA)
     hass.services.async_register(
