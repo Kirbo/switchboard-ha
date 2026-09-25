@@ -192,6 +192,8 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "healthy": False,
         "dropped_pct": 4.2,
         "congestion": 0.61,
+        "render_lag_pct": 0.0,
+        "encode_lag_pct": 0.0,
         "reconnecting": False,
     },
     {
