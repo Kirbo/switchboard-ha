@@ -28,6 +28,7 @@ from .api import (
 )
 from .const import (
     CONF_MIRROR_CHAT_TEXT,
+    CONF_MIRROR_MODERATION_TARGETS,
     DOMAIN,
     EVENT_SWITCHBOARD,
     ISSUE_FINGERPRINT_MISMATCH,
@@ -519,18 +520,33 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
     def _bus_frame(self, frame: dict[str, Any]) -> dict[str, Any]:
         """What actually goes on the HA bus for one frame.
 
-        `twitch_chat_message` is the one event redacted HERE, not by the app: HA's recorder stores
-        every non-excluded custom event (`events` / `event_data`, kept for `purge_keep_days`), so
-        re-firing chat verbatim builds a per-line archive of who said what on the HA box — the
-        archive the app refuses to write to its own log under any setting (SB-D-022). The frame
-        still fires (with `author`/`text` as null, the contract's own redacted shape) so chat can
-        be counted; the `mirror_chat_text` option opts back in for users who want the words.
+        `twitch_chat_message` and `twitch_moderation` are redacted HERE, not by the app: HA's
+        recorder stores every non-excluded custom event (`events` / `event_data`, kept for
+        `purge_keep_days`), so re-firing them verbatim builds a per-line archive on the HA box of
+        who said what, and of which viewer was moderated and why — records the app refuses to
+        write to its own log (SB-D-022, SB-00060). The frames still fire (chat with
+        `author`/`text` as null, the contract's own redacted shape; moderation with the viewer
+        fields null) so they can be counted and reacted to; the `mirror_chat_text` and
+        `mirror_moderation_targets` options opt back in.
         """
-        if frame.get("type") != "twitch_chat_message":
-            return frame
-        if self.entry.options.get(CONF_MIRROR_CHAT_TEXT, False):
-            return frame
-        return {**frame, "author": None, "text": None}
+        etype = frame.get("type")
+        if etype == "twitch_chat_message":
+            if self.entry.options.get(CONF_MIRROR_CHAT_TEXT, False):
+                return frame
+            return {**frame, "author": None, "text": None}
+        if etype == "twitch_moderation":
+            # Same recorder reasoning for the moderated viewer: the action and outcome stay, the
+            # login / user id / reason / error text naming them go, unless the user opts in.
+            if self.entry.options.get(CONF_MIRROR_MODERATION_TARGETS, False):
+                return frame
+            return {
+                **frame,
+                "target_login": None,
+                "target_user_id": None,
+                "reason": None,
+                "error": None,
+            }
+        return frame
 
     @callback
     def _apply(self, frame: dict[str, Any]) -> bool:

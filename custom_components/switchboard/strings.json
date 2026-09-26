@@ -57,10 +57,12 @@
       "init": {
         "title": "Switchboard options",
         "data": {
-          "mirror_chat_text": "Mirror chat text onto the event bus"
+          "mirror_chat_text": "Mirror chat text onto the event bus",
+          "mirror_moderation_targets": "Mirror moderated viewers onto the event bus"
         },
         "data_description": {
-          "mirror_chat_text": "Off by default: twitch_chat_message events reach the Home Assistant bus with author and text set to null, so chat can be counted without the recorder archiving every line of who said what. Turn on to receive the names and the words (they still require the read_events_sensitive scope and the app's full chat detail setting)."
+          "mirror_chat_text": "Off by default: twitch_chat_message events reach the Home Assistant bus with author and text set to null, so chat can be counted without the recorder archiving every line of who said what. Turn on to receive the names and the words (they still require the read_events_sensitive scope and the app's full chat detail setting).",
+          "mirror_moderation_targets": "Off by default: twitch_moderation events reach the Home Assistant bus with the action and outcome but with target_login, target_user_id, reason and error set to null, so the recorder does not keep a per-viewer moderation record. Turn on to receive who was moderated (still requires the read_events_sensitive scope)."
         }
       }
     }

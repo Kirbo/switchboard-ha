@@ -165,6 +165,7 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 | Option | Default | Notes |
 |---|---|---|
 | **Mirror chat text onto the event bus** | off | With it off, `twitch_chat_message` still reaches the HA bus for every chat line — so chat can be counted — but with `author` and `text` set to `null`. Turn it on to receive the names and the words (they still need the `read_events_sensitive` scope and the app's `full` chat-detail setting). |
+| **Mirror moderated viewers onto the event bus** | off | With it off, `twitch_moderation` still reaches the HA bus with the action and outcome, but with `target_login`, `target_user_id`, `reason` and `error` set to `null`. Turn it on to receive who was moderated (still needs the `read_events_sensitive` scope). |
 
 > **Why off by default.** Home Assistant's recorder stores every custom event that isn't excluded
 > (`events` / `event_data`, kept for `purge_keep_days`, 10 by default). Re-firing chat verbatim would

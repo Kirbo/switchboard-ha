@@ -23,6 +23,7 @@ from custom_components.switchboard.config_flow import (
 from custom_components.switchboard.const import (
     CONF_FINGERPRINT,
     CONF_MIRROR_CHAT_TEXT,
+    CONF_MIRROR_MODERATION_TARGETS,
     DOMAIN,
     ISSUE_FINGERPRINT_MISMATCH,
 )
@@ -165,12 +166,19 @@ async def test_options_flow_defaults_chat_text_off_and_persists_the_choice(hass)
         k.default() for k in result["data_schema"].schema if k.schema == CONF_MIRROR_CHAT_TEXT
     )
     assert schema_default is False, "chat text must be opt-IN"
+    moderation_default = next(
+        k.default()
+        for k in result["data_schema"].schema
+        if k.schema == CONF_MIRROR_MODERATION_TARGETS
+    )
+    assert moderation_default is False, "moderation targets must be opt-IN"
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={CONF_MIRROR_CHAT_TEXT: True}
+        result["flow_id"],
+        user_input={CONF_MIRROR_CHAT_TEXT: True, CONF_MIRROR_MODERATION_TARGETS: False},
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {CONF_MIRROR_CHAT_TEXT: True}
+    assert entry.options == {CONF_MIRROR_CHAT_TEXT: True, CONF_MIRROR_MODERATION_TARGETS: False}
 
 
 def test_the_option_and_the_issue_have_user_facing_strings():
@@ -179,6 +187,10 @@ def test_the_option_and_the_issue_have_user_facing_strings():
         strings = json.loads((COMPONENT / name).read_text())
         assert CONF_MIRROR_CHAT_TEXT in strings["options"]["step"]["init"]["data"]
         assert CONF_MIRROR_CHAT_TEXT in strings["options"]["step"]["init"]["data_description"]
+        assert CONF_MIRROR_MODERATION_TARGETS in strings["options"]["step"]["init"]["data"]
+        assert (
+            CONF_MIRROR_MODERATION_TARGETS in strings["options"]["step"]["init"]["data_description"]
+        )
         issue = strings["issues"][ISSUE_FINGERPRINT_MISMATCH]
         assert "{host}" in issue["description"]
         assert "{seen_fingerprint}" in issue["description"]

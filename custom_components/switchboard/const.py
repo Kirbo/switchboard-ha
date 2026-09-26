@@ -19,6 +19,12 @@ CONF_FINGERPRINT = "fingerprint"  # optional SHA-256 cert pin (hex, ':'-separate
 # (redacted) so chat can be counted.
 CONF_MIRROR_CHAT_TEXT = "mirror_chat_text"
 
+# Whether `twitch_moderation` reaches the HA bus with the viewer it names (`target_login`,
+# `target_user_id`, `reason`, `error`). Off by default for the same recorder reason: re-firing it
+# verbatim keeps a per-viewer moderation record on the HA box that the app keeps out of its own
+# log file. The frame still arrives (action/outcome intact) so automations can react to it.
+CONF_MIRROR_MODERATION_TARGETS = "mirror_moderation_targets"
+
 # Repairs issue keys (strings.json `issues`), suffixed with the entry id per instance.
 ISSUE_FINGERPRINT_MISMATCH = "fingerprint_mismatch"
 

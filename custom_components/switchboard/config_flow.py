@@ -26,7 +26,13 @@ from .api import (
     SwitchboardAuthError,
     SwitchboardClient,
 )
-from .const import CONF_FINGERPRINT, CONF_MIRROR_CHAT_TEXT, DEFAULT_PORT, DOMAIN
+from .const import (
+    CONF_FINGERPRINT,
+    CONF_MIRROR_CHAT_TEXT,
+    CONF_MIRROR_MODERATION_TARGETS,
+    DEFAULT_PORT,
+    DOMAIN,
+)
 
 # The token is a PASSWORD field, not plain text (SB-A-059). Home Assistant renders a plain `str`
 # in the clear, and `add_suggested_values_to_schema` below pre-fills it with the STORED value — so
@@ -50,7 +56,12 @@ STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_TOKEN): _TOKEN_SELECTOR})
 # Options. `mirror_chat_text` defaults OFF (SB-D-022): with it off, `twitch_chat_message` reaches
 # the HA bus with `author`/`text` nulled so the recorder never archives chat lines; the event still
 # fires so chat can be counted. See `coordinator._bus_frame`.
-STEP_OPTIONS_SCHEMA = vol.Schema({vol.Required(CONF_MIRROR_CHAT_TEXT, default=False): bool})
+STEP_OPTIONS_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_MIRROR_CHAT_TEXT, default=False): bool,
+        vol.Required(CONF_MIRROR_MODERATION_TARGETS, default=False): bool,
+    }
+)
 
 
 class SwitchboardConfigFlow(ConfigFlow, domain=DOMAIN):

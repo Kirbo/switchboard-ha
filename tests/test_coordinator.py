@@ -11,6 +11,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.switchboard import coordinator as coord_mod
 from custom_components.switchboard.const import (
     CONF_MIRROR_CHAT_TEXT,
+    CONF_MIRROR_MODERATION_TARGETS,
     DOMAIN,
     EVENT_SWITCHBOARD,
 )
@@ -153,6 +154,54 @@ async def test_chat_redaction_does_not_touch_other_events(hass: HomeAssistant) -
     coord._handle_frame(dict(command))
     await hass.async_block_till_done()
     assert seen == [command]
+
+
+MODERATION_FRAME: dict[str, Any] = {
+    "type": "twitch_moderation",
+    "connection_id": CID,
+    "action": "twitch_user_ban",
+    "target_login": "fresh_account_42",
+    "target_user_id": "123456789",
+    "dry_run": True,
+    "ok": False,
+    "error": "fresh_account_42 is protected",
+    "reason": "account 3 days old",
+    "duration_secs": None,
+    "rule_id": "r1",
+}
+
+
+async def _moderation_bus_frames(
+    hass: HomeAssistant, coord: SwitchboardCoordinator
+) -> list[dict[str, Any]]:
+    seen: list[dict[str, Any]] = []
+    hass.bus.async_listen(EVENT_SWITCHBOARD, lambda e: seen.append(dict(e.data)))
+    coord._handle_frame(dict(MODERATION_FRAME))
+    await hass.async_block_till_done()
+    return seen
+
+
+async def test_moderation_target_is_stripped_from_the_bus_by_default(hass: HomeAssistant) -> None:
+    """The recorder would otherwise keep a per-viewer moderation record (who was banned, why) on
+    the HA box for `purge_keep_days` — the record the app keeps out of its own log file. The frame
+    still fires with the action/outcome, so an automation can count or react to it."""
+    seen = await _moderation_bus_frames(hass, make_coordinator(hass))
+    assert len(seen) == 1
+    frame = seen[0]
+    assert frame["type"] == "twitch_moderation"
+    for field in ("target_login", "target_user_id", "reason", "error"):
+        assert frame[field] is None, field
+    assert frame["action"] == "twitch_user_ban"
+    assert frame["dry_run"] is True
+    assert frame["ok"] is False
+    assert frame["rule_id"] == "r1"
+
+
+async def test_moderation_target_reaches_the_bus_with_the_option_on(hass: HomeAssistant) -> None:
+    seen = await _moderation_bus_frames(
+        hass, make_coordinator(hass, {CONF_MIRROR_MODERATION_TARGETS: True})
+    )
+    assert seen == [MODERATION_FRAME]
 
 
 async def test_obs_events_patch_the_instance(hass: HomeAssistant) -> None:
