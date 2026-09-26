@@ -672,8 +672,14 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # mesh_identity_reset, plugin_paired/removed,
         # spotify_song_liked/spotify_playlist_track_added, insights_session_ended,
         # obs_input_mute_changed, twitch_clip_created, obs_disk_space, obs_stream_stalled,
-        # overlay_countdown, hotkey_pressed, twitch_chat_message)
+        # overlay_countdown, hotkey_pressed, twitch_chat_message, twitch_moderation,
+        # twitch_moderation_paused)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
+        #
+        # twitch_moderation is one moderation rule outcome (the account-age guard — ban, timeout,
+        # chat modes, … or, with `dry_run: true`, what it WOULD have done). It only arrives when the
+        # token holds read_events_sensitive (it names the viewer). Momentary, so no entity; the
+        # storm-guard pause (twitch_moderation_paused) is the edge worth a notification.
         #
         # peer_state_changed carries a paired PEER machine's OBS snapshot (the mesh mirror); this
         # integration models one Switchboard machine per config entry, so a peer's OBS is that
