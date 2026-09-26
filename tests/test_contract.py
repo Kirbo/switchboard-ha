@@ -90,6 +90,32 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "muted": True,
     },
     {
+        "type": "obs_sources_changed",
+        "connection_id": CID,
+        "sources": [
+            {
+                "name": "Mic/Aux",
+                "kind": "pulse_input_capture",
+                "class": "audio",
+                "muted": True,
+                "visible": None,
+            },
+            {
+                "name": "Webcam",
+                "kind": "v4l2_input",
+                "class": "visual",
+                "muted": None,
+                "visible": True,
+            },
+        ],
+    },
+    {
+        "type": "obs_source_visibility_changed",
+        "connection_id": CID,
+        "source": "Webcam",
+        "visible": False,
+    },
+    {
         "type": "app_detect_changed",
         "focused": "steam_app_599140",
         "watched_focused": True,
@@ -415,6 +441,31 @@ API_STATE: dict[str, Any] = {
     "variables": {"deaths": "3", "mode": "gaming"},
     "input_overlay_visible": False,
     "input_overlay_auto_show_at_ms": 1700000300000,
+    "obs_sources": {
+        CID: [
+            {
+                "name": "Mic/Aux",
+                "kind": "pulse_input_capture",
+                "class": "audio",
+                "muted": True,
+                "visible": None,
+            },
+            {
+                "name": "Webcam",
+                "kind": "v4l2_input",
+                "class": "visual",
+                "muted": None,
+                "visible": True,
+            },
+            {
+                "name": "Now playing",
+                "kind": "browser_source",
+                "class": "both",
+                "muted": False,
+                "visible": False,
+            },
+        ]
+    },
     "version": "2026.6.10",
     "update": {"version": "2026.7.1", "body": "notes", "ready": False},
 }
@@ -483,6 +534,20 @@ def test_api_state_maps_every_documented_field() -> None:
     # that OBS) are consumer extras this integration has no use for — the contract only requires
     # that they are tolerated. `go_live_ok` is not surfaced: the HA box never sends a stream key.
     assert "go_live_ok" not in inst
+
+
+def test_api_state_tolerates_the_obs_source_rows() -> None:
+    """`obs_sources` (2026-09-26) is the deck tiles' per-source state. No entity reads it — a
+    per-source entity would be created and removed at runtime as sources come and go — so it must
+    only be tolerated, and must not disturb the OBS instance it describes."""
+    assert "obs_sources" in API_STATE
+    data = _state_from_snapshot(API_STATE)
+    assert data.obs[CID]["current_scene"] == "Gaming"
+    empty_rows = _state_from_snapshot({**API_STATE, "obs_sources": {}})
+    assert set(data.obs[CID]) == set(empty_rows.obs[CID])
+    # An older app omits the key entirely.
+    older = {k: v for k, v in API_STATE.items() if k != "obs_sources"}
+    assert _state_from_snapshot(older).obs == data.obs
 
 
 def test_api_state_tolerates_an_empty_snapshot() -> None:

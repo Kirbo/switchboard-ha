@@ -671,7 +671,8 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # obs_scene_renamed, obs_launched_local, obs_stream_health, twitch_chat_command,
         # mesh_identity_reset, plugin_paired/removed,
         # spotify_song_liked/spotify_playlist_track_added, insights_session_ended,
-        # obs_input_mute_changed, twitch_clip_created, obs_disk_space, obs_stream_stalled,
+        # obs_input_mute_changed, obs_sources_changed, obs_source_visibility_changed,
+        # twitch_clip_created, obs_disk_space, obs_stream_stalled,
         # overlay_countdown, hotkey_pressed, twitch_chat_message, twitch_moderation,
         # twitch_moderation_paused)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
@@ -720,10 +721,14 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # it (`restarted: true`) or gave up (`restarted: false`). Momentary by definition — the
         # restart already happened — so no entity; the give-up edge is the one to notify on.
         #
-        # obs_input_mute_changed says an OBS audio input was muted/unmuted. Like obs_stream_health
-        # it IS a persisting state, but /api/state carries no mute field, so an entity would have
-        # nothing to hydrate from after a restart and would sit at an invented value until the next
-        # change. Automate on the event.
+        # obs_input_mute_changed says an OBS audio input was muted/unmuted, and
+        # obs_source_visibility_changed that a source became shown/hidden on an instance's program
+        # output; obs_sources_changed replaces an instance's whole source list. Since 2026-09-26
+        # /api/state carries those rows (`obs_sources`, the OpenDeck source tiles' state), so the
+        # state now hydrates — but an entity PER source would mean creating and removing HA
+        # entities at runtime as sources are added and removed in OBS, the same bigger product
+        # call as per-variable entities below. The rows are tolerated, not mirrored; automate on
+        # the events.
         #
         # (variable_changed IS applied above — it patches `data.variables`, seeded from
         # /api/state, so a template sensor can read it — but a dedicated entity PER variable would
