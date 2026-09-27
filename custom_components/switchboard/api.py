@@ -9,8 +9,10 @@ Writes (`POST /api/command`) share a per-caller budget the app enforces with HTT
 
 TLS is self-signed (the same cert the peer mesh pins), so verification is one of:
 - pin the SHA-256 fingerprint (aiohttp.Fingerprint) — recommended,
-- skip verification (ssl=False) — simplest,
 - full chain verification (ssl=None) — only if the user fronts it with a trusted cert.
+Skipping verification altogether is NOT an option: the config flow refuses a configuration with
+neither (`no_tls_trust`) and `async_setup_entry` refuses to load an older entry saved that way,
+because the bearer token would be readable by anything able to intercept the connection.
 """
 
 from __future__ import annotations
@@ -60,7 +62,10 @@ RATE_LIMIT_BACKOFF: tuple[float, ...] = (0.25, 0.5, 1.0)
 def build_ssl(verify_ssl: bool, fingerprint: str | None) -> aiohttp.Fingerprint | bool | None:
     """Map the user's TLS choice to an aiohttp `ssl=` value.
 
-    A fingerprint pins the self-signed cert; otherwise verify (None) or skip (False).
+    A fingerprint pins the self-signed cert; otherwise full chain verification (None). The
+    remaining `False` (skip verification) is never reached by a configured entry — the config
+    flow and `async_setup_entry` both refuse "no verification and no fingerprint" before a client
+    is built.
     """
     if fingerprint:
         digest = bytes.fromhex(fingerprint.replace(":", "").replace(" ", "").strip())
