@@ -40,7 +40,9 @@ entities, and lets HA drive Switchboard actions through services.
 **Services** (→ `POST /api/command`):
 
 - `switchboard.run_action` — generic passthrough for **any** action (`action_type`, `target`,
-  `value`, `action_params`); forward-compatible with new Switchboard actions.
+  `value`, `action_params`); forward-compatible with new Switchboard actions. An optional
+  `target_peer_id` (a paired peer's id from Switchboard's `/api/peers`) runs the action on that
+  peer machine over the encrypted mesh — `target` is then a connection id on the peer.
 - `switchboard.obs_scene_set` — switch an OBS connection's program scene.
 - `switchboard.apply_scene_stream_info` — re-apply the Twitch Stream Info (title, category, language, tags) mapped to an OBS connection's current scene, as a scene switch would.
 - `switchboard.go_live` — Twitch **go-live composite**: fetches the account's stream key, sets it

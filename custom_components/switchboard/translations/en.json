@@ -98,6 +98,10 @@
           "name": "Action params",
           "description": "Optional extra action parameters as a JSON object, e.g. remember set to true."
         },
+        "target_peer_id": {
+          "name": "Peer machine",
+          "description": "Optional id of a paired peer machine (Switchboard /api/peers) to run the action on over the encrypted mesh. The target is then a connection id on that peer. Leave blank to run it on this Switchboard."
+        },
         "entry_id": {
           "name": "Switchboard instance",
           "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."

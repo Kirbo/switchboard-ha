@@ -17,6 +17,11 @@ run_action:
       example: '{"remember": true}'
       selector:
         object:
+    target_peer_id:
+      required: false
+      example: 5f0c2b1e-8a4d-4c1e-9b7a-2d3e4f5a6b7c
+      selector:
+        text:
     entry_id:
       required: false
       selector:

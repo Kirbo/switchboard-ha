@@ -8,6 +8,9 @@ docs/HA.md) plus typed conveniences for the actions worth a proper UI: `obs_scen
 `ha_light_flash` (like `ha_service_call` and `discord_webhook_send`) requires the **global**
 External API token — a scope-limited plugin token cannot call it.
 
+`run_action` also takes the contract's optional `target_peer_id` to run the action on a paired
+peer machine (its `target` is then that peer's connection id, sent verbatim).
+
 Targets accept a friendly connection label or a raw id;
 anything that doesn't resolve to a known connection is passed through unchanged (so action
 sentinels like `spotify`, or ids from a not-yet-refreshed list, still work — the backend
@@ -41,6 +44,7 @@ SERVICE_ADD_TO_VARIABLE = "add_to_variable"
 
 ATTR_ACTION_TYPE = "action_type"
 ATTR_TARGET = "target"
+ATTR_TARGET_PEER_ID = "target_peer_id"
 ATTR_ACCOUNT_ID = "account_id"
 ATTR_OBS_ID = "obs_id"
 ATTR_VALUE = "value"
@@ -72,6 +76,9 @@ RUN_ACTION_SCHEMA = vol.Schema(
         vol.Optional(ATTR_TARGET, default=""): cv.string,
         vol.Optional(ATTR_VALUE, default=""): cv.string,
         vol.Optional(ATTR_ACTION_PARAMS, default=dict): dict,
+        # docs/HA.md Commands: routes the action to that paired peer over the encrypted mesh; the
+        # target then names a connection ON THAT PEER (ids from `GET /api/peers`). Blank = local.
+        vol.Optional(ATTR_TARGET_PEER_ID, default=""): cv.string,
         **_ENTRY_FIELD,
     }
 )
@@ -228,16 +235,24 @@ def async_register_services(hass: HomeAssistant) -> None:
         return
 
     async def handle_run_action(call: ServiceCall) -> None:
-        coord, target_id = _pick(hass, call.data[ATTR_TARGET], call.data[ATTR_ENTRY_ID])
-        await _send(
-            coord,
-            {
-                "action_type": call.data[ATTR_ACTION_TYPE],
-                "target_connection_id": target_id,
-                "value": call.data[ATTR_VALUE],
-                "action_params": call.data[ATTR_ACTION_PARAMS],
-            },
-        )
+        peer_id = call.data[ATTR_TARGET_PEER_ID].strip()
+        if peer_id:
+            # The target is a connection on the PEER, which this instance's labels know nothing
+            # about — resolving it here could swap in a same-named LOCAL connection's id. Send it
+            # verbatim; the peer validates it.
+            coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+            target_id = call.data[ATTR_TARGET]
+        else:
+            coord, target_id = _pick(hass, call.data[ATTR_TARGET], call.data[ATTR_ENTRY_ID])
+        payload: dict[str, Any] = {
+            "action_type": call.data[ATTR_ACTION_TYPE],
+            "target_connection_id": target_id,
+            "value": call.data[ATTR_VALUE],
+            "action_params": call.data[ATTR_ACTION_PARAMS],
+        }
+        if peer_id:
+            payload["target_peer_id"] = peer_id
+        await _send(coord, payload)
 
     async def handle_obs_scene_set(call: ServiceCall) -> None:
         coord, target_id = _pick(hass, call.data[ATTR_TARGET], call.data[ATTR_ENTRY_ID])

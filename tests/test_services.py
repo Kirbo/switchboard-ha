@@ -93,6 +93,49 @@ async def test_run_action_passes_through_unknown_targets(hass: HomeAssistant) ->
     }
 
 
+async def test_run_action_forwards_target_peer_id_and_keeps_the_peer_target_verbatim(
+    hass: HomeAssistant,
+) -> None:
+    """docs/HA.md Commands: `target_peer_id` routes the action to that paired peer, and the
+    target then names a connection ON THE PEER — so a label that happens to match a LOCAL
+    connection must not be swapped for the local id."""
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "run_action",
+        {
+            "action_type": "obs_scene_set",
+            "target": "Home OBS",
+            "value": "BRB",
+            "target_peer_id": "peer-1",
+        },
+    )
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "obs_scene_set",
+        "target_connection_id": "Home OBS",
+        "value": "BRB",
+        "action_params": {},
+        "target_peer_id": "peer-1",
+    }
+
+
+async def test_run_action_without_a_peer_sends_no_target_peer_id(hass: HomeAssistant) -> None:
+    """Blank/absent = run locally, exactly as before: the key is not sent and the target still
+    resolves against this instance's labels."""
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "run_action",
+        {"action_type": "obs_scene_set", "target": "Home OBS", "value": "BRB"},
+    )
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "obs_scene_set",
+        "target_connection_id": OBS_CONN,
+        "value": "BRB",
+        "action_params": {},
+    }
+
+
 async def test_overlay_alert_and_machine_state(hass: HomeAssistant) -> None:
     entry = await _setup(hass)
     await _call(hass, "overlay_alert", {"text": "BRB"})
