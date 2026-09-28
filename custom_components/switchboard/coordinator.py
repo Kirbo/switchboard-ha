@@ -554,11 +554,10 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         data = self.data
         etype = frame.get("type")
 
-        # `connections_changed`, `update_available` and `update_ready` are classified INTERNAL in
-        # the app (events.rs `ha_contract::INTERNAL_EVENTS`) — the bus ships them to every
-        # consumer, but the contract doesn't guarantee them. We use them as live *hints* only:
-        # every value they touch is also carried by /api/state, which is re-fetched on every
-        # reconnect, so dropping them would cost freshness, never correctness.
+        # `connections_changed`, `update_available` and `update_ready` are contract events
+        # (docs/HA.md "Full event reference", since app 2026-09-28): they keep the connection list
+        # and /api/state's `update` live. Every value they touch is also carried by /api/state,
+        # re-fetched on every reconnect, so a missed frame costs freshness, never correctness.
         if etype == "connections_changed":
             # Connection set may have changed → refresh list + snapshot, reload if entities differ.
             self.hass.async_create_task(self._refresh_connections())
