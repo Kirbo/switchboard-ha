@@ -44,7 +44,7 @@ entities, and lets HA drive Switchboard actions through services.
   `target_peer_id` (a paired peer's id from Switchboard's `/api/peers`) runs the action on that
   peer machine over the encrypted mesh — `target` is then a connection id on the peer.
 - `switchboard.obs_scene_set` — switch an OBS connection's program scene.
-- `switchboard.apply_scene_stream_info` — re-apply the Twitch Stream Info (title, category, language, tags) mapped to an OBS connection's current scene, as a scene switch would.
+- `switchboard.apply_scene_stream_info` — re-apply the Twitch Stream Info (title, category, language, tags) mapped to an OBS connection's current scene, as a scene switch would (a scene set to take its Stream Info from another OBS uses that OBS's current scene).
 - `switchboard.go_live` — Twitch **go-live composite**: fetches the account's stream key, sets it
   on the target OBS **and starts its stream** as one operation, then makes that account
   Switchboard's default. `account_id` is the Twitch connection (an account on the Switchboard

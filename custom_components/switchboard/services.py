@@ -92,7 +92,8 @@ OBS_SCENE_SET_SCHEMA = vol.Schema(
 )
 
 # `twitch_stream_info_apply` — re-apply the Twitch Stream Info mapped to the OBS connection's
-# CURRENT scene (title, category, language, tags, labels), as a scene switch would. Target only.
+# CURRENT scene (title, category, language, tags, labels), as a scene switch would — following the
+# scene's link when it takes its Stream Info from another OBS (docs/HA.md, 2026-09-29). Target only.
 APPLY_SCENE_STREAM_INFO_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_TARGET): cv.string,

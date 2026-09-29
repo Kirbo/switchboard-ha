@@ -128,7 +128,7 @@
     },
     "apply_scene_stream_info": {
       "name": "Apply scene Stream Info",
-      "description": "Re-apply the Twitch Stream Info (title, category, language, tags, labels) mapped to an OBS connection's current scene — the same as switching to that scene. No-op when the scene has no mapping.",
+      "description": "Re-apply the Twitch Stream Info (title, category, language, tags, labels) mapped to an OBS connection's current scene — the same as switching to that scene. A scene that takes its Stream Info from another OBS uses that OBS's current scene. No-op when there is no mapping.",
       "fields": {
         "target": {
           "name": "OBS connection",
