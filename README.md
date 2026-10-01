@@ -43,6 +43,19 @@ entities, and lets HA drive Switchboard actions through services.
   `value`, `action_params`); forward-compatible with new Switchboard actions. An optional
   `target_peer_id` (a paired peer's id from Switchboard's `/api/peers`) runs the action on that
   peer machine over the encrypted mesh — `target` is then a connection id on the peer.
+  **Auto account + Discord routes** (Switchboard 2026-10 or newer): `target: auto` on a Twitch
+  action is the **Auto** account — whichever account is live on the machine running it (a
+  service call has no trigger to name one; Auto never falls back to an offline default account;
+  sent verbatim, never matched against labels); `multi_live` (`default` / `skip` / `all`) says what it
+  does when several are live (`default` = the default account if it is live, else skip). For
+  `discord_webhook_send`, leave `target` blank and set `discord_route` (a route name, e.g.
+  `Clips`): Switchboard posts to the webhook the Twitch account's Discord group maps that route to,
+  with `twitch_account` (label or id; blank / `auto` = the Auto account) picking the account. These
+  fields are merged into `action_params` under the contract's keys (`discord_route`,
+  `twitch_account`, `multi_live`), which can also be passed there directly. Anything that resolves
+  to nothing is skipped, never posted elsewhere, and fires an `action_skipped` event
+  (`switchboard_event` with `type: action_skipped`, plus `reason`, `action_type`, `account`,
+  `route`).
 - `switchboard.obs_scene_set` — switch an OBS connection's program scene.
 - `switchboard.apply_scene_stream_info` — re-apply the Twitch Stream Info (title, category, language, tags) mapped to an OBS connection's current scene, as a scene switch would (a scene set to take its Stream Info from another OBS uses that OBS's current scene).
 - `switchboard.go_live` — Twitch **go-live composite**: fetches the account's stream key, sets it

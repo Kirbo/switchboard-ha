@@ -22,6 +22,25 @@ run_action:
       example: 5f0c2b1e-8a4d-4c1e-9b7a-2d3e4f5a6b7c
       selector:
         text:
+    discord_route:
+      required: false
+      example: Clips
+      selector:
+        text:
+    twitch_account:
+      required: false
+      example: auto
+      selector:
+        text:
+    multi_live:
+      required: false
+      example: default
+      selector:
+        select:
+          options:
+            - default
+            - skip
+            - all
     entry_id:
       required: false
       selector:

@@ -88,7 +88,7 @@
         },
         "target": {
           "name": "Target",
-          "description": "Connection label or id (or a sentinel like \"spotify\"). Leave blank for actions with no target."
+          "description": "Connection label or id (or a sentinel like \"spotify\"). \"auto\" on a Twitch action = the Auto account: whichever account is live on the Switchboard running it, never an offline default (see \"If several accounts are live\"). Leave blank for actions with no target, or for the default connection."
         },
         "value": {
           "name": "Value",
@@ -101,6 +101,18 @@
         "target_peer_id": {
           "name": "Peer machine",
           "description": "Optional id of a paired peer machine (Switchboard /api/peers) to run the action on over the encrypted mesh. The target is then a connection id on that peer. Leave blank to run it on this Switchboard."
+        },
+        "discord_route": {
+          "name": "Discord route",
+          "description": "For discord_webhook_send with a blank target: the Discord route name (e.g. Clips) to post to. Switchboard posts to the webhook that the Twitch account's Discord group maps that route to; an unmapped route is skipped (logged), never posted elsewhere. On a peer, the peer resolves the name against its own routes."
+        },
+        "twitch_account": {
+          "name": "Twitch account",
+          "description": "For a Discord route: the Twitch account (label or id) whose Discord group resolves the route. Blank or \"auto\" = the Auto account: the live one, never an offline default."
+        },
+        "multi_live": {
+          "name": "If several accounts are live",
+          "description": "What the Auto account does when more than one account is live: default (the default account if it is live, else skip), skip, or all (run once per live account)."
         },
         "entry_id": {
           "name": "Switchboard instance",

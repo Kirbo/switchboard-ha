@@ -689,13 +689,19 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # obs_input_mute_changed, obs_sources_changed, obs_source_visibility_changed,
         # twitch_clip_created, obs_disk_space, obs_stream_stalled,
         # overlay_countdown, hotkey_pressed, twitch_chat_message, twitch_moderation,
-        # twitch_moderation_paused)
+        # twitch_moderation_paused, action_skipped, discord_routes_changed)
         # backs no entity — it is already on the HA bus as `switchboard_event` for automations.
         #
         # twitch_moderation is one moderation rule outcome (the account-age guard — ban, timeout,
         # chat modes, … or, with `dry_run: true`, what it WOULD have done). It only arrives when the
         # token holds read_events_sensitive (it names the viewer). Momentary, so no entity; the
         # storm-guard pause (twitch_moderation_paused) is the edge worth a notification.
+        #
+        # action_skipped is a rule/API action the app skipped instead of running (the Auto Twitch
+        # account or a Discord route resolved to nothing — `reason` says which, names only):
+        # momentary, so automate on the bus event (e.g. notify "no webhook for Clips on KirboAlt").
+        # discord_routes_changed carries the app's Discord route/group configuration (ids and names
+        # only); no entity models routes here, so the bus event is all a consumer needs.
         #
         # peer_state_changed carries a paired PEER machine's OBS snapshot (the mesh mirror); this
         # integration models one Switchboard machine per config entry, so a peer's OBS is that

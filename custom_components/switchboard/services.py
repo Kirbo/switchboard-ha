@@ -9,7 +9,10 @@ docs/HA.md) plus typed conveniences for the actions worth a proper UI: `obs_scen
 External API token — a scope-limited plugin token cannot call it.
 
 `run_action` also takes the contract's optional `target_peer_id` to run the action on a paired
-peer machine (its `target` is then that peer's connection id, sent verbatim).
+peer machine (its `target` is then that peer's connection id, sent verbatim), and the Auto
+Twitch account / Discord routes (docs/HA.md Commands): `target: auto` is sent verbatim as the
+Auto sentinel, and the optional `discord_route` / `twitch_account` / `multi_live` fields are
+merged into `action_params` under the contract's own keys.
 
 Targets accept a friendly connection label or a raw id;
 anything that doesn't resolve to a known connection is passed through unchanged (so action
@@ -65,6 +68,18 @@ ATTR_OFF_MS = "off_ms"
 ATTR_TRANSITION_MS = "transition_ms"
 ATTR_SECONDS = "seconds"
 ATTR_VISIBLE = "visible"
+ATTR_DISCORD_ROUTE = "discord_route"
+ATTR_TWITCH_ACCOUNT = "twitch_account"
+ATTR_MULTI_LIVE = "multi_live"
+
+# docs/HA.md Commands: the Auto Twitch account — the account the trigger came from, else the one
+# that is live on the machine running the action (an /api command has no trigger, so: the live
+# one). It never falls back to an offline default account: nothing resolved = skipped. A SENTINEL,
+# sent verbatim: never resolved as a label (an account could be labelled "auto").
+AUTO_ACCOUNT = "auto"
+# What Auto does when several accounts are live; absent = "default" (the default account if it is
+# one of the live ones, else skip).
+MULTI_LIVE_CHOICES = ["default", "skip", "all"]
 
 # Every service takes an optional entry_id so a specific Switchboard instance can be addressed
 # when several machines are configured (without it, the first entry wins).
@@ -79,6 +94,12 @@ RUN_ACTION_SCHEMA = vol.Schema(
         # docs/HA.md Commands: routes the action to that paired peer over the encrypted mesh; the
         # target then names a connection ON THAT PEER (ids from `GET /api/peers`). Blank = local.
         vol.Optional(ATTR_TARGET_PEER_ID, default=""): cv.string,
+        # docs/HA.md Commands (Discord routes): a route NAME for discord_webhook_send with a blank
+        # target, the Twitch account it resolves through (label/id, or "auto" = the Auto account),
+        # and what Auto does with several live accounts. Merged into action_params.
+        vol.Optional(ATTR_DISCORD_ROUTE): cv.string,
+        vol.Optional(ATTR_TWITCH_ACCOUNT): cv.string,
+        vol.Optional(ATTR_MULTI_LIVE): vol.In(MULTI_LIVE_CHOICES),
         **_ENTRY_FIELD,
     }
 )
@@ -237,19 +258,37 @@ def async_register_services(hass: HomeAssistant) -> None:
 
     async def handle_run_action(call: ServiceCall) -> None:
         peer_id = call.data[ATTR_TARGET_PEER_ID].strip()
-        if peer_id:
-            # The target is a connection on the PEER, which this instance's labels know nothing
-            # about — resolving it here could swap in a same-named LOCAL connection's id. Send it
-            # verbatim; the peer validates it.
+        target = call.data[ATTR_TARGET]
+        if peer_id or target == AUTO_ACCOUNT:
+            # A peer's target is a connection on the PEER, which this instance's labels know
+            # nothing about — resolving it here could swap in a same-named LOCAL connection's id;
+            # "auto" is the Auto-account sentinel, never a label. Send either verbatim; the
+            # machine that runs the action validates it.
             coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
-            target_id = call.data[ATTR_TARGET]
+            target_id = target
         else:
-            coord, target_id = _pick(hass, call.data[ATTR_TARGET], call.data[ATTR_ENTRY_ID])
+            coord, target_id = _pick(hass, target, call.data[ATTR_ENTRY_ID])
+        params: dict[str, Any] = dict(call.data[ATTR_ACTION_PARAMS])
+        if route := call.data.get(ATTR_DISCORD_ROUTE, "").strip():
+            params[ATTR_DISCORD_ROUTE] = route
+        account = call.data.get(ATTR_TWITCH_ACCOUNT, "").strip()
+        if account and account != AUTO_ACCOUNT:
+            # An absent twitch_account already means the Auto account, so Auto is omitted. A
+            # local label resolves to its id like every other target; a peer's is sent verbatim.
+            if not peer_id:
+                try:
+                    account = coord.resolve_connection_id(account, "twitch") or account
+                except ValueError as err:
+                    raise HomeAssistantError(str(err)) from err
+            params[ATTR_TWITCH_ACCOUNT] = account
+        multi_live = call.data.get(ATTR_MULTI_LIVE, "default")
+        if multi_live != "default":
+            params[ATTR_MULTI_LIVE] = multi_live
         payload: dict[str, Any] = {
             "action_type": call.data[ATTR_ACTION_TYPE],
             "target_connection_id": target_id,
             "value": call.data[ATTR_VALUE],
-            "action_params": call.data[ATTR_ACTION_PARAMS],
+            "action_params": params,
         }
         if peer_id:
             payload["target_peer_id"] = peer_id

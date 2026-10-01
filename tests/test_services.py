@@ -136,6 +136,121 @@ async def test_run_action_without_a_peer_sends_no_target_peer_id(hass: HomeAssis
     }
 
 
+async def test_run_action_sends_the_auto_account_verbatim(hass: HomeAssistant) -> None:
+    """docs/HA.md Commands: `target_connection_id: "auto"` = the Auto Twitch account (the live
+    one). It is a sentinel, never a label — even a connection that happens to be labelled "auto"
+    must not be swapped in for it."""
+    entry = await _setup(hass)
+    hass.data[DOMAIN][entry.entry_id].connections.append(
+        {"id": "44444444-4444-4444-4444-444444444444", "integration": "twitch", "label": "auto"}
+    )
+    await _call(
+        hass,
+        "run_action",
+        {"action_type": "twitch_clip_create", "target": "auto", "multi_live": "all"},
+    )
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "twitch_clip_create",
+        "target_connection_id": "auto",
+        "value": "",
+        "action_params": {"multi_live": "all"},
+    }
+
+
+async def test_run_action_omits_multi_live_when_it_is_the_default(hass: HomeAssistant) -> None:
+    """Absent `multi_live` means `default` on the app side — sending it adds nothing."""
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "run_action",
+        {"action_type": "twitch_marker_create", "target": "auto", "multi_live": "default"},
+    )
+    assert _client(hass, entry.entry_id).commands[-1]["action_params"] == {}
+
+
+async def test_run_action_rejects_an_unknown_multi_live(hass: HomeAssistant) -> None:
+    await _setup(hass)
+    with pytest.raises(vol.Invalid):
+        await _call(
+            hass,
+            "run_action",
+            {"action_type": "twitch_clip_create", "target": "auto", "multi_live": "first"},
+        )
+
+
+async def test_run_action_posts_to_a_discord_route(hass: HomeAssistant) -> None:
+    """A route is a blank target + `action_params.discord_route` (the NAME). `twitch_account`
+    resolves a local label to its id; Auto is the default and is omitted."""
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "run_action",
+        {
+            "action_type": "discord_webhook_send",
+            "value": "New clip!",
+            "discord_route": "Clips",
+            "twitch_account": "Main",
+            "action_params": {"keep": True},
+        },
+    )
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "discord_webhook_send",
+        "target_connection_id": "",
+        "value": "New clip!",
+        "action_params": {"keep": True, "discord_route": "Clips", "twitch_account": TWITCH_CONN},
+    }
+    await _call(
+        hass,
+        "run_action",
+        {
+            "action_type": "discord_webhook_send",
+            "value": "x",
+            "discord_route": "Clips",
+            "twitch_account": "auto",
+            "multi_live": "skip",
+        },
+    )
+    assert _client(hass, entry.entry_id).commands[-1]["action_params"] == {
+        "discord_route": "Clips",
+        "multi_live": "skip",
+    }
+
+
+async def test_run_action_passes_route_params_through_action_params(hass: HomeAssistant) -> None:
+    """The raw contract keys in `action_params` reach the app untouched (forward-compatible)."""
+    entry = await _setup(hass)
+    params = {"discord_route": "Moderation", "twitch_account": "auto", "multi_live": "all"}
+    await _call(
+        hass,
+        "run_action",
+        {"action_type": "discord_webhook_send", "value": "x", "action_params": params},
+    )
+    assert _client(hass, entry.entry_id).commands[-1]["action_params"] == params
+
+
+async def test_run_action_keeps_a_peer_twitch_account_verbatim(hass: HomeAssistant) -> None:
+    """On a peer the account is a connection ON THE PEER: never resolved against local labels."""
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "run_action",
+        {
+            "action_type": "discord_webhook_send",
+            "value": "x",
+            "discord_route": "Clips",
+            "twitch_account": "Main",
+            "target_peer_id": "peer-1",
+        },
+    )
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "discord_webhook_send",
+        "target_connection_id": "",
+        "value": "x",
+        "action_params": {"discord_route": "Clips", "twitch_account": "Main"},
+        "target_peer_id": "peer-1",
+    }
+
+
 async def test_overlay_alert_and_machine_state(hass: HomeAssistant) -> None:
     entry = await _setup(hass)
     await _call(hass, "overlay_alert", {"text": "BRB"})

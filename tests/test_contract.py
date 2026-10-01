@@ -76,6 +76,30 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     {"type": "obs_disk_space", "connection_id": CID, "free_mb": 12698, "low": True},
     {"type": "obs_stream_stalled", "connection_id": CID, "seconds": 17, "restarted": True},
     {
+        "type": "action_skipped",
+        "rule_id": "rule-1",
+        "action_type": "discord_webhook_send",
+        "reason": "route_unmapped",
+        "account": "KirboAlt",
+        "route": "Clips",
+        "source": None,
+    },
+    {
+        "type": "discord_routes_changed",
+        "state": {
+            "routes": [{"id": "route-1", "name": "Clips", "seeded": True}],
+            "groups": [
+                {
+                    "id": "group-1",
+                    "name": "Kirbo's server",
+                    "members": [CID],
+                    "map": [{"route_id": "route-1", "connection_id": CID}],
+                    "twitch_accounts": [CID],
+                }
+            ],
+        },
+    },
+    {
         "type": "twitch_clip_created",
         "connection_id": CID,
         "clip_id": "SomeClipSlug",
@@ -287,6 +311,11 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
                 "go_live_ok": True,
             }
         ],
+        "connections": [
+            {"id": CID, "integration": "twitch", "label": "KirboWned", "is_default": True}
+        ],
+        # 2026-10: the peer's Discord route names; null = its snapshot predates routes.
+        "discord_routes": ["Clips", "Moderation"],
     },
     {"type": "opendeck_connection", "plugin_id": CID, "name": "Deck", "connected": True},
     {"type": "plugin_paired", "name": "Deck"},
