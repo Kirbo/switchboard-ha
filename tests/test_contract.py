@@ -18,6 +18,7 @@ import pytest
 from custom_components.switchboard.coordinator import (
     SwitchboardData,
     _apply_afk,
+    _is_resync,
     _state_from_snapshot,
 )
 
@@ -407,6 +408,18 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     {"type": "opendeck_event", "source": "opendeck", "fields": [["button", "scene_1"]]},
     {"type": "navigate_to_view", "view": "settings", "anchor": "gpu", "source": "OpenDeck"},
 ]
+
+# docs/HA.md "Event stream" → "resync" (app 2026-10-13) — verbatim. NOT an event (it concerns one
+# socket), so it is deliberately absent from DOCUMENTED_EVENTS; tests/test_resync.py drives it.
+RESYNC_FRAME: dict[str, Any] = {"type": "resync"}
+
+
+def test_the_resync_frame_is_outside_the_event_reference() -> None:
+    assert all(f["type"] != RESYNC_FRAME["type"] for f in DOCUMENTED_EVENTS)
+    assert _is_resync(RESYNC_FRAME)
+    assert not _is_resync({"type": "resynced"})
+    assert not _is_resync(["resync"])
+
 
 # docs/HA.md "Connections & current state" — the full `ApiState` example.
 API_STATE: dict[str, Any] = {

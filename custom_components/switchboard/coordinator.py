@@ -4,6 +4,13 @@ Push integration. `_async_update_data` runs once (initial `/api/state` + `/api/c
 after that a background task streams `/api/events/ws`, patches the snapshot in place, and calls
 `async_set_updated_data` so entities update. Every frame is also re-fired on the HA bus as
 `switchboard_event` for user automations.
+
+The snapshot is re-read on every connect and whenever the app sends a `resync` frame (its socket
+fell behind and dropped events — docs/HA.md, "resync"). Both re-reads are awaited INSIDE the
+frame loop, so frames that arrive while the GETs are in flight wait in the socket's receive
+queue and are applied over the fresh snapshot afterwards, in arrival order: that queue is the
+buffer that keeps an older snapshot from overwriting a newer event. Never move a re-read into a
+detached task — the frames after it would then be applied first and lost under the snapshot.
 """
 
 from __future__ import annotations
@@ -139,6 +146,12 @@ _SPOTIFY_KEYS = (
     "up_next_artist",
     "duration_ms",
 )
+
+
+def _is_resync(frame: Any) -> bool:
+    """The app's `{"type": "resync"}` frame (docs/HA.md, "resync", app 2026-10-13): not an event
+    — it concerns this one socket — so it is never re-fired on the HA bus or patched in."""
+    return isinstance(frame, dict) and frame.get("type") == "resync"
 
 
 def _spotify_view(now: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -382,7 +395,19 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
-                                self._handle_frame(msg.json())
+                                frame = msg.json()
+                            except ValueError:  # one bad frame must not kill the loop
+                                _LOGGER.exception("switchboard: failed to parse event frame")
+                                continue
+                            if _is_resync(frame):
+                                # The app dropped frames this socket should have had; change-only
+                                # state would stay stale until it moved again. Awaited inline (see
+                                # the module docstring); a failure reconnects, like the one above.
+                                _LOGGER.debug("switchboard: app asked for a resync")
+                                await self._resync()
+                                continue
+                            try:
+                                self._handle_frame(frame)
                             except Exception:  # one bad frame must not kill the loop
                                 _LOGGER.exception("switchboard: failed to handle event frame")
                         elif msg.type in (

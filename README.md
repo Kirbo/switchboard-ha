@@ -9,7 +9,8 @@ It consumes Switchboard's **External API** (the same authenticated surface docum
 entities, and lets HA drive Switchboard actions through services.
 
 > **Local push.** State arrives over a long-lived websocket — no polling. The integration fetches a
-> snapshot on every (re)connect, then stays live from the event stream.
+> snapshot on every (re)connect — and again whenever the app reports that events were dropped on
+> the way — then stays live from the event stream.
 
 ## What you get
 
