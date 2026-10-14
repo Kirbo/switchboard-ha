@@ -174,6 +174,11 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 > adopts a new fingerprint on its own. If you rotated it yourself, **Reconfigure** and paste the new
 > fingerprint from the Peers tab; if you didn't, treat the repair as a warning.
 
+> **Rejected token.** If Switchboard answers `401` (the token was revoked, rotated or disabled), the
+> entities go unavailable, HA starts **re-authentication** for the entry, and the integration stops
+> reconnecting — a dead token is not retried. Finish the re-authentication with a valid token (the
+> same one, if you re-enabled it) and the entry reloads and reconnects.
+
 ### Options
 
 **Settings → Devices & Services → Switchboard → Configure** (the gear on the entry):

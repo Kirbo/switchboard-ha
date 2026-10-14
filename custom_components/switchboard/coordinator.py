@@ -16,6 +16,7 @@ detached task — the frames after it would then be applied first and lost under
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import logging
 import time
@@ -270,6 +271,9 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         self._access_denied_logged = False
         self._reauth_logged = False
         self._fingerprint_mismatch_logged = False
+        # The reconnect backoff's wait — `asyncio.sleep`; a test injects a recorder so the ladder
+        # can be asserted without waiting it out.
+        self._backoff_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
     async def _async_update_data(self) -> SwitchboardData:
         try:
@@ -381,6 +385,12 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
     async def _ws_loop(self) -> None:
         step = 0
         while not self._closing:
+            # A 401 (on the upgrade or a resync read) means the token is gone (docs/HA.md): the
+            # reauth flow is the way back — it reloads the entry with the new token, which starts
+            # a fresh loop. Retrying a dead token only spends the app's per-token budget and logs
+            # an "auth throttled" line per attempt there, so the loop stops (as HA's own
+            # coordinator stops refreshing on ConfigEntryAuthFailed).
+            token_rejected = False
             try:
                 async with self.client.ws_connect() as ws:
                     _LOGGER.debug("switchboard: events websocket connected")
@@ -398,6 +408,11 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                                 frame = msg.json()
                             except ValueError:  # one bad frame must not kill the loop
                                 _LOGGER.exception("switchboard: failed to parse event frame")
+                                continue
+                            if not isinstance(frame, dict):
+                                # The contract only sends event objects; a bare `null`/number/list
+                                # is not one (and has no `type` to patch or re-fire by).
+                                _LOGGER.debug("switchboard: ignoring a non-object frame: %r", frame)
                                 continue
                             if _is_resync(frame):
                                 # The app dropped frames this socket should have had; change-only
@@ -422,6 +437,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 # A revoked/rotated token surfaces here as a 401 on the upgrade request.
                 if err.status == 401:
                     self._start_reauth()
+                    token_rejected = True
                 elif err.status == 403:
                     self._log_access_denied()
                 else:
@@ -429,6 +445,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             except SwitchboardAuthError:
                 # The resync REST calls got a 401 — same revoked-token case.
                 self._start_reauth()
+                token_rejected = True
             except SwitchboardAccessError:
                 # The resync REST calls got a 403 — the token is fine but an ACL denies us.
                 self._log_access_denied()
@@ -447,14 +464,18 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             if self.last_update_success:
                 self.last_update_success = False
                 self.async_update_listeners()
-            await asyncio.sleep(RECONNECT_LADDER[step])
+            if token_rejected:
+                _LOGGER.debug("switchboard: token rejected — events loop stopped until reauth")
+                return
+            await self._backoff_sleep(RECONNECT_LADDER[step])
             step = min(step + 1, len(RECONNECT_LADDER) - 1)
 
     def _start_reauth(self) -> None:
         """Kick off the reauth flow (deduped by HA) — the token no longer works.
 
-        The log line is gated once per outage; HA dedups the flow itself, but the retry loop
-        would repeat the warning every backoff step while the reauth sits unresolved.
+        The events loop stops right after this (a dead token is not retried; finishing the
+        reauth reloads the entry). The log line stays gated once per outage in case another
+        path reports the same rejection.
         """
         if not self._reauth_logged:
             self._reauth_logged = True
