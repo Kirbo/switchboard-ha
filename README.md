@@ -257,8 +257,9 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
   Switchboard so on its open events websocket (a `goodbye` frame with reason `restart` or `stop`;
   Switchboard versions that predate it ignore the frame): the app then treats the drop of its own
   Home Assistant connection as an expected restart — INFO lines instead of warnings, no
-  "reconnecting" rows, the connection card stays connected — for its restart grace window (30 s by
-  default). The frame is fire-and-forget (capped at 1 s, never delays the shutdown), and the
+  "reconnecting" rows, the connection card stays connected — for its restart grace window (60 s by
+  default, up to 5 minutes, in Switchboard's Settings → Home Assistant), and one "reconnected after
+  its restart" row once Home Assistant is back. The frame is fire-and-forget (capped at 1 s, never delays the shutdown), and the
   integration neither retries nor warns while Home Assistant goes down; it reconnects on the next
   start. A restart is recognised from Home Assistant's restart exit code or a
   `homeassistant.restart` service call in the two minutes before the stop (on HA OS / Supervised
