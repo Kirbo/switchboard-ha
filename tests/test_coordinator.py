@@ -21,7 +21,7 @@ from custom_components.switchboard.coordinator import (
 )
 
 from .conftest import FakeClient
-from .test_contract import API_AFK, API_STATE, CID, DOCUMENTED_EVENTS
+from .test_contract import ALERT_PRESET, API_AFK, API_STATE, CID, DOCUMENTED_EVENTS
 
 TWITCH_ID = "22222222-2222-2222-2222-222222222222"
 
@@ -497,3 +497,67 @@ async def test_input_overlay_visibility_event_drives_the_flag(hass: HomeAssistan
     assert coord.data.input_overlay_visible is False
     assert coord.data.input_overlay_auto_show_at_ms == 1700000300000
     assert _state_from_snapshot({}).input_overlay_visible is True
+
+
+def _alert_frame(**fields: Any) -> dict[str, Any]:
+    return {
+        "type": "alert_queue_changed",
+        "preset_id": ALERT_PRESET,
+        "name": "Main alerts",
+        "paused": False,
+        "queued": 3,
+        "dropped": 0,
+        "merged": 14,
+        "showing": "twitch_raid",
+        **fields,
+    }
+
+
+async def test_alert_queue_changed_patches_the_alerts_slice(hass: HomeAssistant) -> None:
+    """docs/HA.md "Alert presets": seeded from /api/state, kept live by `alert_queue_changed`."""
+    coord = make_coordinator(hass)
+    assert coord.data.alerts[ALERT_PRESET]["queued"] == 3  # seeded from /api/state
+    # The same values again change nothing (no entity rewrite, no recorder row).
+    assert not coord._apply(_alert_frame())
+    assert coord._apply(_alert_frame(queued=0, paused=True, showing=None, dropped=2))
+    assert coord.data.alerts[ALERT_PRESET] == {
+        "name": "Main alerts",
+        "queued": 0,
+        "paused": True,
+        "showing": None,
+        "dropped": 2,
+        "merged": 14,
+    }
+    # A preset the snapshot did not know (created since) is added.
+    other = "55555555-5555-5555-5555-555555555555"
+    assert coord._apply(_alert_frame(preset_id=other, name="Second", queued=1))
+    assert coord.data.alerts[other]["name"] == "Second"
+    # A frame without a usable preset id changes nothing (and does not raise).
+    assert not coord._apply({"type": "alert_queue_changed", "queued": 1})
+
+
+async def test_alert_queue_frame_without_a_name_keeps_the_known_name(
+    hass: HomeAssistant,
+) -> None:
+    coord = make_coordinator(hass)
+    frame = _alert_frame(queued=5)
+    del frame["name"]
+    assert coord._apply(frame)
+    assert coord.data.alerts[ALERT_PRESET]["name"] == "Main alerts"
+
+
+async def test_the_deleted_preset_frame_drops_the_row(hass: HomeAssistant) -> None:
+    """A deleted preset sends one last all-zero frame with an EMPTY name, then is gone."""
+    coord = make_coordinator(hass)
+    deleted = _alert_frame(name="", queued=0, merged=0, showing=None)
+    assert coord._apply(deleted)
+    assert ALERT_PRESET not in coord.data.alerts
+    # The same frame again (or for a preset we never had) is a no-op.
+    assert not coord._apply(deleted)
+
+
+async def test_an_idle_preset_is_not_mistaken_for_a_deleted_one(hass: HomeAssistant) -> None:
+    """All-zero counters with the preset's real name is just an idle queue."""
+    coord = make_coordinator(hass)
+    assert coord._apply(_alert_frame(queued=0, merged=0, showing=None))
+    assert ALERT_PRESET in coord.data.alerts

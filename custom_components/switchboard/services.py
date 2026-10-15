@@ -4,7 +4,8 @@ A generic `run_action` passthrough (forward-compatible with the additive action 
 docs/HA.md) plus typed conveniences for the actions worth a proper UI: `obs_scene_set`,
 `twitch_go_live`, `overlay_alert_show`, `machine_state_set`, `ha_light_flash`, `afk_snooze`,
 `input_overlay_show`/`_hide`/`_toggle`,
-`afk_reset_idle`.
+`afk_reset_idle`, and the alert-preset queue controls `alert_skip` / `alert_pause` /
+`alert_resume` / `alert_replay` (`overlay_alert_skip` / … — app 2026-10-15).
 `ha_light_flash` (like `ha_service_call` and `discord_webhook_send`) requires the **global**
 External API token — a scope-limited plugin token cannot call it.
 
@@ -22,6 +23,7 @@ validates and 400s if truly wrong).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -44,6 +46,17 @@ SERVICE_AFK_RESET_IDLE = "afk_reset_idle"
 SERVICE_SET_INPUT_OVERLAY_VISIBLE = "set_input_overlay_visible"
 SERVICE_SET_VARIABLE = "set_variable"
 SERVICE_ADD_TO_VARIABLE = "add_to_variable"
+# Alert-preset queue controls → `overlay_alert_<control>` (docs/HA.md "Alert presets").
+SERVICE_ALERT_SKIP = "alert_skip"
+SERVICE_ALERT_PAUSE = "alert_pause"
+SERVICE_ALERT_RESUME = "alert_resume"
+SERVICE_ALERT_REPLAY = "alert_replay"
+ALERT_CONTROLS = {
+    SERVICE_ALERT_SKIP: "overlay_alert_skip",
+    SERVICE_ALERT_PAUSE: "overlay_alert_pause",
+    SERVICE_ALERT_RESUME: "overlay_alert_resume",
+    SERVICE_ALERT_REPLAY: "overlay_alert_replay",
+}
 
 ATTR_ACTION_TYPE = "action_type"
 ATTR_TARGET = "target"
@@ -71,6 +84,7 @@ ATTR_VISIBLE = "visible"
 ATTR_DISCORD_ROUTE = "discord_route"
 ATTR_TWITCH_ACCOUNT = "twitch_account"
 ATTR_MULTI_LIVE = "multi_live"
+ATTR_PRESET = "preset"
 
 # docs/HA.md Commands: the Auto Twitch account — the account the trigger came from, else the one
 # that is live on the machine running the action (an /api command has no trigger, so: the live
@@ -191,6 +205,11 @@ SET_INPUT_OVERLAY_VISIBLE_SCHEMA = vol.Schema(
     }
 )
 
+# The alert preset by id or name (the app matches names case-insensitively); blank = every preset.
+ALERT_CONTROL_SCHEMA = vol.Schema(
+    {vol.Optional(ATTR_PRESET, default=""): cv.string, **_ENTRY_FIELD}
+)
+
 # ha_flash keys forwarded verbatim when supplied (the app defaults anything omitted).
 _FLASH_KEYS = (
     ATTR_FLASHES,
@@ -249,6 +268,29 @@ async def _send(coord: Any, payload: dict[str, Any]) -> None:
         raise HomeAssistantError(f"Switchboard command failed: {err}") from err
     if not result.get("ok"):
         raise HomeAssistantError(f"Switchboard rejected the command: {result}")
+
+
+async def _send_alert_control(coord: Any, action_type: str, preset: str) -> None:
+    """One alert-preset queue control. The preset rides `action_params.alert_preset` (the app
+    resolves an id or a case-insensitive name); blank = every preset, so nothing is sent for it.
+
+    An app older than the alert presets (2026-10-15) answers 400 to the unknown action type, and
+    a current one answers 400 to an unknown preset — both are said plainly instead of surfacing
+    as a bare "HTTP 400".
+    """
+    payload: dict[str, Any] = {"action_type": action_type, "value": ""}
+    if preset:
+        payload["action_params"] = {"alert_preset": preset}
+    try:
+        await _send(coord, payload)
+    except HomeAssistantError as err:
+        if isinstance(err.__cause__, SwitchboardApiError) and "HTTP 400" in str(err.__cause__):
+            raise HomeAssistantError(
+                f"Switchboard refused {action_type}: {err.__cause__}. Check the alert preset's "
+                "name or id — or update Switchboard: alert-preset controls need the app from "
+                "2026-10-15 or newer."
+            ) from err.__cause__
+        raise
 
 
 def async_register_services(hass: HomeAssistant) -> None:
@@ -417,6 +459,18 @@ def async_register_services(hass: HomeAssistant) -> None:
         coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
         await _send(coord, {"action_type": "afk_reset_idle", "value": ""})
         coord.schedule_afk_refresh()
+
+    def make_alert_handler(action_type: str) -> Callable[[ServiceCall], Awaitable[None]]:
+        async def handle_alert_control(call: ServiceCall) -> None:
+            coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+            await _send_alert_control(coord, action_type, call.data[ATTR_PRESET].strip())
+
+        return handle_alert_control
+
+    for service, action_type in ALERT_CONTROLS.items():
+        hass.services.async_register(
+            DOMAIN, service, make_alert_handler(action_type), schema=ALERT_CONTROL_SCHEMA
+        )
 
     hass.services.async_register(
         DOMAIN, SERVICE_RUN_ACTION, handle_run_action, schema=RUN_ACTION_SCHEMA

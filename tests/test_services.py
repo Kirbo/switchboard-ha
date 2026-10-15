@@ -7,7 +7,7 @@ from homeassistant.exceptions import HomeAssistantError
 import pytest
 import voluptuous as vol
 
-from custom_components.switchboard.api import SwitchboardRateLimitError
+from custom_components.switchboard.api import SwitchboardApiError, SwitchboardRateLimitError
 from custom_components.switchboard.const import DOMAIN
 
 from .test_entities import _setup
@@ -368,3 +368,39 @@ async def test_unknown_entry_id_raises(hass: HomeAssistant) -> None:
     await _setup(hass)
     with pytest.raises(HomeAssistantError, match="no Switchboard config entry"):
         await _call(hass, "overlay_alert", {"text": "x", "entry_id": "bogus"})
+
+
+@pytest.mark.parametrize(
+    ("service", "action_type"),
+    [
+        ("alert_skip", "overlay_alert_skip"),
+        ("alert_pause", "overlay_alert_pause"),
+        ("alert_resume", "overlay_alert_resume"),
+        ("alert_replay", "overlay_alert_replay"),
+    ],
+)
+async def test_alert_controls_name_the_preset_in_action_params(
+    hass: HomeAssistant, service: str, action_type: str
+) -> None:
+    """docs/HA.md Commands: the preset (id or case-insensitive name — the app resolves it) rides
+    `action_params.alert_preset`; blank = every preset, so nothing is sent for it."""
+    entry = await _setup(hass)
+    await _call(hass, service, {"preset": "Main alerts"})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": action_type,
+        "value": "",
+        "action_params": {"alert_preset": "Main alerts"},
+    }
+    await _call(hass, service, {})
+    assert _client(hass, entry.entry_id).commands[-1] == {"action_type": action_type, "value": ""}
+
+
+async def test_an_alert_control_the_app_refuses_says_why(hass: HomeAssistant) -> None:
+    """An app older than the alert presets 400s the unknown action type; a current one 400s an
+    unknown preset. Either way the error names the likely causes, not just "HTTP 400"."""
+    entry = await _setup(hass)
+    _client(hass, entry.entry_id).error = SwitchboardApiError(
+        "command failed: HTTP 400 unknown action_type"
+    )
+    with pytest.raises(HomeAssistantError, match="2026-10-15"):
+        await _call(hass, "alert_pause", {"preset": "Nope"})

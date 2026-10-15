@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from homeassistant.components.binary_sensor import (
+    DOMAIN as BINARY_SENSOR_DOMAIN,
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
@@ -15,7 +16,13 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import SwitchboardCoordinator
-from .entity import SwitchboardHubEntity, SwitchboardObsEntity, SwitchboardTwitchEntity
+from .entity import (
+    SwitchboardAlertEntity,
+    SwitchboardHubEntity,
+    SwitchboardObsEntity,
+    SwitchboardTwitchEntity,
+    async_track_alert_entities,
+)
 
 # (state key, entity name, device class)
 _OBS_FLAGS = (
@@ -43,6 +50,30 @@ async def async_setup_entry(
         ]
     entities += [TwitchLiveSensor(coordinator, entry, cid) for cid in coordinator.twitch_ids()]
     async_add_entities(entities)
+    # Per alert preset, added and removed live as presets come and go (app 2026-10-15).
+    async_track_alert_entities(
+        hass,
+        entry,
+        coordinator,
+        async_add_entities,
+        BINARY_SENSOR_DOMAIN,
+        (AlertPausedSensor.KEY,),
+        lambda pid: [AlertPausedSensor(coordinator, entry, pid)],
+    )
+
+
+class AlertPausedSensor(SwitchboardAlertEntity, BinarySensorEntity):
+    """Whether an alert preset's queue is held by hand (`switchboard.alert_pause`, a deck key, a
+    rule or the app's editor). The alert on screen finishes; the rest wait until resumed."""
+
+    KEY = "paused"
+    _key = KEY
+    _suffix = "paused"
+    _attr_icon = "mdi:bell-pause"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._row.get("paused"))
 
 
 class ObsFlagSensor(SwitchboardObsEntity, BinarySensorEntity):

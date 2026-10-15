@@ -6,12 +6,13 @@ from unittest.mock import patch
 
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.switchboard.const import CONF_FINGERPRINT, DOMAIN
 
 from .conftest import FakeClient
-from .test_contract import API_AFK, API_STATE
+from .test_contract import ALERT_PRESET, API_AFK, API_STATE
 from .test_coordinator import CONNECTIONS
 
 # A pinned fingerprint, because SB-B-007 makes `verify_ssl: False` with no fingerprint refuse to
@@ -25,10 +26,12 @@ ENTRY_DATA = {
 }
 
 
-async def _setup(hass: HomeAssistant) -> MockConfigEntry:
+async def _setup(hass: HomeAssistant, state: dict | None = None) -> MockConfigEntry:
     entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA, title="Switchboard (test)")
     entry.add_to_hass(hass)
-    client = FakeClient(state=API_STATE, connections=list(CONNECTIONS), afk=API_AFK)
+    client = FakeClient(
+        state=API_STATE if state is None else state, connections=list(CONNECTIONS), afk=API_AFK
+    )
     with (
         patch("custom_components.switchboard.SwitchboardClient", return_value=client),
         # The events websocket is exercised in the coordinator tests; keep it out of setup.
@@ -111,6 +114,117 @@ async def test_needs_reauth_sensor_is_off_until_a_credential_is_rejected(
     assert state.attributes["integrations"] == ["twitch"]
 
 
+PAUSED = "binary_sensor.switchboard_test_main_alerts_paused"
+QUEUED = "sensor.switchboard_test_main_alerts_queued"
+
+
+async def test_alert_preset_entities_mirror_the_alerts_slice(hass: HomeAssistant) -> None:
+    """docs/HA.md "Alert presets": one `paused` binary sensor + one `queued` sensor per preset."""
+    entry = await _setup(hass)
+    assert hass.states.get(PAUSED).state == "off"
+    queued = hass.states.get(QUEUED)
+    assert queued.state == "3"
+    assert queued.attributes["showing"] == "twitch_raid"
+    assert queued.attributes["dropped"] == 0
+    assert queued.attributes["merged"] == 14
+    assert queued.attributes["preset_id"] == ALERT_PRESET
+
+    coord = hass.data[DOMAIN][entry.entry_id]
+    coord._handle_frame(
+        {
+            "type": "alert_queue_changed",
+            "preset_id": ALERT_PRESET,
+            "name": "Main alerts",
+            "paused": True,
+            "queued": 5,
+            "dropped": 1,
+            "merged": 14,
+            "showing": None,
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(PAUSED).state == "on"
+    queued = hass.states.get(QUEUED)
+    assert queued.state == "5"
+    assert queued.attributes["showing"] is None
+    assert queued.attributes["dropped"] == 1
+
+
+async def test_alert_preset_entities_come_and_go_with_the_presets(hass: HomeAssistant) -> None:
+    """A preset created in the app gets its entities on its first frame; the deleted-preset frame
+    removes them from the registry — no reload, no lingering `unavailable` rows."""
+    entry = await _setup(hass)
+    coord = hass.data[DOMAIN][entry.entry_id]
+    other = "55555555-5555-5555-5555-555555555555"
+    coord._handle_frame(
+        {
+            "type": "alert_queue_changed",
+            "preset_id": other,
+            "name": "Second",
+            "paused": False,
+            "queued": 1,
+            "dropped": 0,
+            "merged": 0,
+            "showing": "twitch_follow",
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.switchboard_test_second_queued").state == "1"
+    assert hass.states.get("binary_sensor.switchboard_test_second_paused").state == "off"
+
+    coord._handle_frame(
+        {
+            "type": "alert_queue_changed",
+            "preset_id": ALERT_PRESET,
+            "name": "",
+            "paused": False,
+            "queued": 0,
+            "dropped": 0,
+            "merged": 0,
+            "showing": None,
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(PAUSED) is None
+    assert hass.states.get(QUEUED) is None
+    registry = er.async_get(hass)
+    assert registry.async_get(QUEUED) is None
+    assert registry.async_get(PAUSED) is None
+    # The other preset is untouched.
+    assert hass.states.get("sensor.switchboard_test_second_queued").state == "1"
+
+
+async def test_an_app_without_alert_presets_gets_no_alert_entities(hass: HomeAssistant) -> None:
+    """`alerts` is additive (2026-10-15): an older app omits it — no entities, no errors."""
+    await _setup(hass, {k: v for k, v in API_STATE.items() if k != "alerts"})
+    assert hass.states.get(PAUSED) is None
+    assert hass.states.get(QUEUED) is None
+    assert hass.states.get("sensor.home_obs_scene").state == "Gaming"
+
+
+async def test_a_preset_deleted_while_ha_was_down_is_purged_at_setup(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    assert hass.states.get(QUEUED) is not None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    client = FakeClient(
+        state={**API_STATE, "alerts": {}}, connections=list(CONNECTIONS), afk=API_AFK
+    )
+    with (
+        patch("custom_components.switchboard.SwitchboardClient", return_value=client),
+        patch(
+            "custom_components.switchboard.coordinator.SwitchboardCoordinator.async_start",
+            return_value=None,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    registry = er.async_get(hass)
+    assert registry.async_get(QUEUED) is None
+    assert registry.async_get(PAUSED) is None
+
+
 async def test_services_are_registered(hass: HomeAssistant) -> None:
     await _setup(hass)
     for service in (
@@ -121,6 +235,10 @@ async def test_services_are_registered(hass: HomeAssistant) -> None:
         "light_flash",
         "afk_snooze",
         "afk_reset_idle",
+        "alert_skip",
+        "alert_pause",
+        "alert_resume",
+        "alert_replay",
     ):
         assert hass.services.has_service(DOMAIN, service), service
 

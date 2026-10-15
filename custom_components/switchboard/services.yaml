@@ -286,3 +286,55 @@ set_input_overlay_visible:
       selector:
         config_entry:
           integration: switchboard
+
+alert_skip:
+  fields:
+    preset:
+      required: false
+      example: Main alerts
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
+
+alert_pause:
+  fields:
+    preset:
+      required: false
+      example: Main alerts
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
+
+alert_resume:
+  fields:
+    preset:
+      required: false
+      example: Main alerts
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
+
+alert_replay:
+  fields:
+    preset:
+      required: false
+      example: Main alerts
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard

@@ -108,6 +108,11 @@ class SwitchboardData:
     # auto-show timer brings them back (None = no timer). Kept live by `input_overlay_visibility`.
     input_overlay_visible: bool = True
     input_overlay_auto_show_at_ms: int | None = None
+    # Alert presets' queues (app 2026-10-15, additive on /api/state as `alerts`; absent on older
+    # apps = no presets): preset id -> {name, queued, paused, showing, dropped, merged}. Seeded
+    # from the snapshot, kept live by `alert_queue_changed`; a deleted preset's last all-zero
+    # frame drops its row (and the entities built on it go with it).
+    alerts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def watched_app_active(self) -> bool:
@@ -147,6 +152,52 @@ _SPOTIFY_KEYS = (
     "up_next_artist",
     "duration_ms",
 )
+
+
+def _alert_view(raw: dict[str, Any], previous: dict[str, Any] | None = None) -> dict[str, Any]:
+    """One `/api/state.alerts` row (or an `alert_queue_changed` frame) → our per-preset fields.
+
+    Every field is coerced to the contract's type so a missing key on a frame reads as the idle
+    value instead of raising. A frame without `name` keeps the name we already had.
+    """
+
+    def count(key: str) -> int:
+        value = raw.get(key)
+        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+    name = raw.get("name")
+    if not isinstance(name, str):
+        name = (previous or {}).get("name") or ""
+    showing = raw.get("showing")
+    return {
+        "name": name,
+        "queued": count("queued"),
+        "paused": raw.get("paused") is True,
+        "showing": showing if isinstance(showing, str) and showing else None,
+        "dropped": count("dropped"),
+        "merged": count("merged"),
+    }
+
+
+def _is_deleted_alert_frame(frame: dict[str, Any]) -> bool:
+    """docs/HA.md "Alert presets": a deleted preset sends one last frame with everything
+    zero/`false`/`null` and an EMPTY `name`, then drops out of `/api/state`."""
+    return (
+        frame.get("name") == ""
+        and not frame.get("queued")
+        and not frame.get("paused")
+        and frame.get("showing") is None
+        and not frame.get("dropped")
+        and not frame.get("merged")
+    )
+
+
+def _alerts_from_snapshot(raw: Any) -> dict[str, dict[str, Any]]:
+    """`/api/state.alerts` → preset id -> row. Absent (an app older than 2026-10-15) or malformed
+    reads as "no presets", never an error."""
+    if not isinstance(raw, dict):
+        return {}
+    return {str(pid): _alert_view(row) for pid, row in raw.items() if isinstance(row, dict)}
 
 
 def _is_resync(frame: Any) -> bool:
@@ -242,6 +293,7 @@ def _state_from_snapshot(
         variables={str(k): str(v) for k, v in (raw.get("variables") or {}).items()},
         input_overlay_visible=raw.get("input_overlay_visible", True) is not False,
         input_overlay_auto_show_at_ms=raw.get("input_overlay_auto_show_at_ms"),
+        alerts=_alerts_from_snapshot(raw.get("alerts")),
         # Preserved across a resync — /api/state doesn't carry them, /api/afk does.
         afk_threshold_secs=previous.afk_threshold_secs if previous else None,
         afk_snooze_until_ms=previous.afk_snooze_until_ms if previous else None,
@@ -696,6 +748,21 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             data.input_overlay_auto_show_at_ms = at if isinstance(at, int) else None
             return True
 
+        if etype == "alert_queue_changed":
+            # One alert preset's queue moved (docs/HA.md "Alert presets"); the slice was seeded
+            # from /api/state. The deleted-preset frame removes the row — the platforms' listeners
+            # then remove that preset's entities.
+            pid = frame.get("preset_id")
+            if not isinstance(pid, str) or not pid:
+                return False
+            if _is_deleted_alert_frame(frame):
+                return data.alerts.pop(pid, None) is not None
+            row = _alert_view(frame, data.alerts.get(pid))
+            if data.alerts.get(pid) == row:
+                return False
+            data.alerts[pid] = row
+            return True
+
         if etype == "variable_changed":
             # One user variable set/incremented; the full map was seeded from /api/state.
             name = frame.get("name")
@@ -729,7 +796,9 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             # No payload on this one (docs/HA.md field notes) — nothing is playing.
             return self._set_spotify(None, SPOTIFY_STOPPED)
 
-        # Everything else on the contract's event list (home_assistant_*, overlay_alert,
+        # Everything else on the contract's event list (home_assistant_*, overlay_alert (bare or
+        # a preset's alert starting on screen — `preset_id`/`kind`/`variant_id`/`test`; the
+        # queue state it implies arrives as alert_queue_changed),
         # peer_lifecycle/peer_reachability/peer_state_changed, rule_fired, the rule_action_* trio,
         # rule_events_dropped, external_command/external_command_failed, opendeck_*, twitch_event,
         # twitch_go_live, twitch_stream_target_restored, navigate_to_view, obs_reconnecting,

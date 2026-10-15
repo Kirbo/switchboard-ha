@@ -27,7 +27,9 @@ entities, and lets HA drive Switchboard actions through services.
   while any Switchboard connection's own credential was rejected by its provider — a revoked
   Twitch refresh token, a Home Assistant long-lived token answered with `auth_invalid`. That is
   not "offline": the app has stopped retrying and nothing reconnects until someone replaces the
-  credential in Switchboard. Attributes name the affected `connections` and `integrations`).
+  credential in Switchboard. Attributes name the affected `connections` and `integrations`);
+  per **alert preset** (Switchboard 2026-10-15 or newer): `<preset> paused` — the preset's alert
+  queue is held by hand (`switchboard.alert_pause`, a deck key, a rule or the app's editor).
 - **Sensors** — per OBS connection: current `Scene` (attribute: that instance's `scenes` list),
   `Stream started` (timestamp — derive uptime from it) and `Stream delay` (seconds, `0` = off);
   per Twitch connection: `Viewers`, `Chatters`, `Followers`, `Subscribers` (the last two are the
@@ -36,7 +38,15 @@ entities, and lets HA drive Switchboard actions through services.
   (`playing`/`paused`/`stopped`) with now-playing attributes (title, artist, featuring, album,
   playlist, playlist URL, art URL, up-next track, duration), `Focused app` (attributes: the
   `running` watch-list ids plus the separate `watched_focused` / `watched_running` flags), and
-  `Version` (with any pending-update attributes).
+  `Version` (with any pending-update attributes); per **alert preset**: `<preset> queued` — how
+  many alerts are waiting (attributes: `showing` = the alert kind on screen right now, e.g.
+  `twitch_follow`, `null` = nothing; `dropped` = alerts thrown away since the app started;
+  `merged` = alerts folded into a storm summary since the app started; `paused`; `preset_id`).
+
+Alert-preset entities sit on the Switchboard service device and follow the app live: a preset
+created in Switchboard gets its two entities on its first queue change, a deleted one has them
+removed (no reload), and a rename updates the friendly name. An older Switchboard without alert
+presets simply gets none.
 
 **Services** (→ `POST /api/command`):
 
@@ -70,6 +80,13 @@ entities, and lets HA drive Switchboard actions through services.
   the stream stops, Switchboard auto-restores the OBS stream settings and fires
   `twitch_stream_target_restored`.
 - `switchboard.overlay_alert` — show an alert on the Switchboard alerts overlay.
+- `switchboard.alert_skip` / `alert_pause` / `alert_resume` / `alert_replay` — control an alert
+  preset's queue: skip ends the alert on screen now; pause holds the queue (the alert on screen
+  finishes, the rest wait); resume releases it; replay queues the last alert that showed again.
+  `preset` is the preset's name (case-insensitive) or id; blank = **every** preset. Needs
+  Switchboard 2026-10-15 or newer (an older app, or an unknown preset, is refused with an error
+  saying so). To fire a test alert, use `run_action` with `action_type: overlay_alert_test`
+  (`value` = the preset; optional `action_params.alert_kind` / `alert_variant`).
 - `switchboard.set_variable` / `switchboard.add_to_variable` — write one of Switchboard's user
   variables (counters, mode flags, labels). `add_to_variable` takes an `amount` (default `1`,
   negative subtracts) and starts a missing variable at 0, so an HA automation can keep a tally
@@ -99,7 +116,9 @@ optional `entry_id` to address a specific instance when several Switchboard mach
 **Bus event** — **every** Switchboard event is re-fired as `switchboard_event` (with its raw `type`
 and fields), including the ones that back no entity: `twitch_event` (follows/subs/raids/cheers),
 `rule_fired`, the peer-action queue trio `rule_action_queued` / `_delivered` / `_failed`,
-`rule_events_dropped`, `peer_lifecycle` / `peer_reachability` / `peer_state_changed`, `overlay_alert`,
+`rule_events_dropped`, `peer_lifecycle` / `peer_reachability` / `peer_state_changed`, `overlay_alert`
+(an alert preset's alert starting on screen also carries `preset_id`, `kind`, `variant_id` and
+`test`), `alert_queue_changed` (what keeps the alert-preset entities current),
 `home_assistant_state_changed` (Switchboard's *own* watched HA entities), `external_command` /
 `external_command_failed`, `twitch_audience_totals`,
 `opendeck_event`, `mesh_identity_reset`, the go-live pair `twitch_go_live` /

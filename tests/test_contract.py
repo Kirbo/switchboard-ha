@@ -24,6 +24,7 @@ from custom_components.switchboard.coordinator import (
 
 # --- docs/HA.md "Full event reference" -----------------------------------------------------
 CID = "11111111-1111-1111-1111-111111111111"
+ALERT_PRESET = "44444444-4444-4444-4444-444444444444"
 
 DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     {"type": "obs_connection", "connection_id": CID, "connected": True},
@@ -294,6 +295,38 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     # with that one field emptied — no new field, nothing absent, just "". See
     # `test_redacted_frames_keep_their_shape`.
     {"type": "overlay_alert", "text": ""},
+    # docs/HA.md "Alert presets" (2026-10-15, additive): a PRESET's alert starting on screen
+    # carries the preset/kind/variant/test fields on top of `text`; the bare form above is
+    # unchanged.
+    {
+        "type": "overlay_alert",
+        "text": "3 new followers: mothlamp_99, rivet_fox, quietstorm",
+        "preset_id": ALERT_PRESET,
+        "kind": "twitch_follow",
+        "variant_id": "variant-1",
+        "test": False,
+    },
+    {
+        "type": "alert_queue_changed",
+        "preset_id": ALERT_PRESET,
+        "name": "Main alerts",
+        "paused": False,
+        "queued": 3,
+        "dropped": 0,
+        "merged": 14,
+        "showing": "twitch_raid",
+    },
+    # A deleted preset's last frame: everything zero/false/null and an EMPTY name.
+    {
+        "type": "alert_queue_changed",
+        "preset_id": ALERT_PRESET,
+        "name": "",
+        "paused": False,
+        "queued": 0,
+        "dropped": 0,
+        "merged": 0,
+        "showing": None,
+    },
     {"type": "mesh_identity_reset", "fingerprint": "4c9f84bb"},
     {"type": "peer_lifecycle", "peer_id": CID, "name": "Gaming", "state": "restarting"},
     {"type": "peer_reachability", "peer_id": CID, "name": "Gaming", "online": True},
@@ -509,6 +542,17 @@ API_STATE: dict[str, Any] = {
             },
         ]
     },
+    # docs/HA.md "Alert presets" (2026-10-15, additive; `{}` with no preset, absent on older apps).
+    "alerts": {
+        ALERT_PRESET: {
+            "name": "Main alerts",
+            "queued": 3,
+            "paused": False,
+            "showing": "twitch_raid",
+            "dropped": 0,
+            "merged": 14,
+        }
+    },
     "version": "2026.6.10",
     "update": {"version": "2026.7.1", "body": "notes", "ready": False},
 }
@@ -573,6 +617,16 @@ def test_api_state_maps_every_documented_field() -> None:
     assert data.watched_app_active is True
     assert data.version == "2026.6.10"
     assert data.update == {"version": "2026.7.1", "body": "notes", "ready": False}
+    assert data.alerts == {
+        ALERT_PRESET: {
+            "name": "Main alerts",
+            "queued": 3,
+            "paused": False,
+            "showing": "twitch_raid",
+            "dropped": 0,
+            "merged": 14,
+        }
+    }
     # `seq` (per-node ordering stamp) and `go_live_ok` (may THIS machine deliver a stream key to
     # that OBS) are consumer extras this integration has no use for — the contract only requires
     # that they are tolerated. `go_live_ok` is not surfaced: the HA box never sends a stream key.
@@ -593,6 +647,24 @@ def test_api_state_tolerates_the_obs_source_rows() -> None:
     assert _state_from_snapshot(older).obs == data.obs
 
 
+def test_api_state_tolerates_an_app_without_alert_presets() -> None:
+    """`alerts` is additive (2026-10-15): an older app omits it, a current one with no preset
+    sends `{}`. Both mean "no presets" — no entities, no error."""
+    older = {k: v for k, v in API_STATE.items() if k != "alerts"}
+    assert _state_from_snapshot(older).alerts == {}
+    assert _state_from_snapshot({**API_STATE, "alerts": {}}).alerts == {}
+    assert _state_from_snapshot({**API_STATE, "alerts": None}).alerts == {}
+
+
+def test_alert_queue_frames_carry_every_documented_field() -> None:
+    """The event carries the `/api/state` row's fields plus `preset_id`."""
+    frames = [f for f in DOCUMENTED_EVENTS if f["type"] == "alert_queue_changed"]
+    row_keys = set(next(iter(API_STATE["alerts"].values())))
+    for frame in frames:
+        assert set(frame) == row_keys | {"type", "preset_id"}
+    assert any(f["name"] == "" for f in frames), "the deleted-preset frame is represented"
+
+
 def test_api_state_tolerates_an_empty_snapshot() -> None:
     """Nothing configured yet (or an older app) must not raise."""
     data = _state_from_snapshot({})
@@ -602,6 +674,7 @@ def test_api_state_tolerates_an_empty_snapshot() -> None:
     assert data.spotify == "stopped"
     assert data.spotify_now is None
     assert data.afk is False
+    assert data.alerts == {}
 
 
 def test_api_state_prefers_machine_state_over_the_afk_bool() -> None:

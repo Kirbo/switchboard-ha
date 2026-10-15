@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
+    DOMAIN as SENSOR_DOMAIN,
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
@@ -17,7 +18,13 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, SPOTIFY_PAUSED, SPOTIFY_PLAYING, SPOTIFY_STOPPED
 from .coordinator import SwitchboardCoordinator
-from .entity import SwitchboardHubEntity, SwitchboardObsEntity, SwitchboardTwitchEntity
+from .entity import (
+    SwitchboardAlertEntity,
+    SwitchboardHubEntity,
+    SwitchboardObsEntity,
+    SwitchboardTwitchEntity,
+    async_track_alert_entities,
+)
 
 
 def _as_timestamp(ms: Any) -> datetime | None:
@@ -55,6 +62,48 @@ async def async_setup_entry(
             TwitchLiveSinceSensor(coordinator, entry, cid),
         ]
     async_add_entities(entities)
+    # Per alert preset, added and removed live as presets come and go (app 2026-10-15).
+    async_track_alert_entities(
+        hass,
+        entry,
+        coordinator,
+        async_add_entities,
+        SENSOR_DOMAIN,
+        (AlertQueuedSensor.KEY,),
+        lambda pid: [AlertQueuedSensor(coordinator, entry, pid)],
+    )
+
+
+class AlertQueuedSensor(SwitchboardAlertEntity, SensorEntity):
+    """How many alerts an alert preset has waiting (docs/HA.md "Alert presets").
+
+    Attributes: `showing` = the kind on screen right now (`twitch_follow`, …, `custom` for an
+    automation's alert; `None` = nothing), `dropped` = alerts thrown away since the app started
+    (waited past the preset's max wait, or the queue was full), `merged` = alerts folded into a
+    storm summary since the app started, `paused` = the queue is held by hand.
+    """
+
+    KEY = "queued"
+    _key = KEY
+    _suffix = "queued"
+    _attr_icon = "mdi:bell-ring-outline"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> int | None:
+        row = self._row
+        return row.get("queued") if row else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        row = self._row
+        return {
+            "preset_id": self._pid,
+            "showing": row.get("showing"),
+            "dropped": row.get("dropped", 0),
+            "merged": row.get("merged", 0),
+            "paused": bool(row.get("paused")),
+        }
 
 
 class ObsSceneSensor(SwitchboardObsEntity, SensorEntity):

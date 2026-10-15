@@ -317,6 +317,62 @@
           "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
       }
+    },
+    "alert_skip": {
+      "name": "Skip alert",
+      "description": "End the alert on screen now on a Switchboard alert preset (the gap before the next one still follows).",
+      "fields": {
+        "preset": {
+          "name": "Alert preset",
+          "description": "The alert preset's name (case-insensitive) or id. Leave blank to act on every preset."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
+    "alert_pause": {
+      "name": "Pause alerts",
+      "description": "Hold an alert preset's queue: the alert on screen finishes, the rest wait (waiting while paused does not count against the preset's max wait).",
+      "fields": {
+        "preset": {
+          "name": "Alert preset",
+          "description": "The alert preset's name (case-insensitive) or id. Leave blank to act on every preset."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
+    "alert_resume": {
+      "name": "Resume alerts",
+      "description": "Release a paused alert preset's queue.",
+      "fields": {
+        "preset": {
+          "name": "Alert preset",
+          "description": "The alert preset's name (case-insensitive) or id. Leave blank to act on every preset."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
+    "alert_replay": {
+      "name": "Replay alert",
+      "description": "Queue the last alert an alert preset showed again.",
+      "fields": {
+        "preset": {
+          "name": "Alert preset",
+          "description": "The alert preset's name (case-insensitive) or id. Leave blank to act on every preset."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
     }
   }
 }
