@@ -253,6 +253,18 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 - The API event/command schema is **additive**: new event types and fields appear over time and are
   ignored if unknown. New OBS/Twitch connections added (or renamed) in Switchboard trigger a reload
   so their entities and device names follow.
+- **Restarting Home Assistant is not an outage.** When Home Assistant stops, the integration tells
+  Switchboard so on its open events websocket (a `goodbye` frame with reason `restart` or `stop`;
+  Switchboard versions that predate it ignore the frame): the app then treats the drop of its own
+  Home Assistant connection as an expected restart — INFO lines instead of warnings, no
+  "reconnecting" rows, the connection card stays connected — for its restart grace window (30 s by
+  default). The frame is fire-and-forget (capped at 1 s, never delays the shutdown), and the
+  integration neither retries nor warns while Home Assistant goes down; it reconnects on the next
+  start. A restart is recognised from Home Assistant's restart exit code or a
+  `homeassistant.restart` service call in the two minutes before the stop (on HA OS / Supervised
+  the Supervisor restarts Core with a plain stop, so the service call is what tells them apart);
+  anything else — e.g. `ha core restart` from the Supervisor CLI — is reported as `stop`, which the
+  app's grace covers the same way.
 - A few numbers are derived locally rather than streamed, exactly as the contract prescribes:
   **stream/live uptime** comes from the `Stream started` / `Live since` timestamps, and album/box
   art is loaded from the `art_url` / `box_art_url` attributes (the app broadcasts URLs, never

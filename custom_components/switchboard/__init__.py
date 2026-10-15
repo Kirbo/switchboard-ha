@@ -97,6 +97,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Start the ws task only after platform forwarding succeeded — a failed forward would
     # otherwise leak the background task (HA doesn't unload a failed setup).
     await coordinator.async_start()
+    # Say goodbye on Home Assistant's stop (docs/HA.md, `goodbye`): the app then treats the drop
+    # of its HA connection as a restart, not an outage. Removed on unload, so a reloaded entry
+    # never registers (or sends) twice.
+    coordinator.async_listen_ha_stop()
     return True
 
 
@@ -105,5 +109,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         coordinator: SwitchboardCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator.async_unlisten_ha_stop()
         await coordinator.async_stop()
     return unloaded

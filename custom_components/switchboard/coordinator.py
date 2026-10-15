@@ -24,7 +24,12 @@ from typing import Any
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import (
+    EVENT_CALL_SERVICE,
+    EVENT_HOMEASSISTANT_STOP,
+    RESTART_EXIT_CODE,
+)
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -50,6 +55,16 @@ _LOGGER = logging.getLogger(__name__)
 # Reconnect backoff ladder (seconds): never stops retrying, capped at 60s. Reset to step 0 on a
 # successful connect. Matches the Switchboard app's own app→HA ladder.
 RECONNECT_LADDER = (1, 2, 3, 5, 10, 15, 30, 45, 60)
+
+# The goodbye frame (docs/HA.md, `goodbye`) is fire-and-forget: HA is shutting down and must never
+# wait on the app. One second caps the send even on a stalled socket.
+GOODBYE_TIMEOUT_SECS = 1.0
+
+# A `homeassistant.restart` service call marks the NEXT stop as a restart for this long. Needed
+# because on a Supervisor install (HA OS / Supervised) that service asks the Supervisor to restart
+# the container, which stops Core with SIGTERM — exit code 0, indistinguishable from a plain stop.
+# Bounded so a restart that was refused (HA's config check failed) does not label a stop days later.
+RESTART_REQUEST_TTL_SECS = 120.0
 
 # How long an /api/afk resample waits before firing, so a burst of scene changes costs one
 # request instead of one per event.
@@ -200,6 +215,11 @@ def _alerts_from_snapshot(raw: Any) -> dict[str, dict[str, Any]]:
     return {str(pid): _alert_view(row) for pid, row in raw.items() if isinstance(row, dict)}
 
 
+@callback
+def _is_restart_call(event_data: Any) -> bool:
+    return event_data.get("domain") == "homeassistant" and event_data.get("service") == "restart"
+
+
 def _is_resync(frame: Any) -> bool:
     """The app's `{"type": "resync"}` frame (docs/HA.md, "resync", app 2026-10-13): not an event
     — it concerns this one socket — so it is never re-fired on the HA bus or patched in."""
@@ -314,7 +334,15 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         self.client = client
         self.connections: list[dict[str, Any]] = []
         self._closing = False
+        # Set by HA's stop: the loop's leftover errors are expected and logged at DEBUG only.
+        self._ha_stopping = False
         self._ws_task: asyncio.Task[None] | None = None
+        # The events socket while it is open — the goodbye frame goes out on it.
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        # HA's stop listener + the restart-request watcher (removed on unload, so a reloaded
+        # entry never says goodbye twice).
+        self._stop_unsubs: list[CALLBACK_TYPE] = []
+        self._restart_requested_at: float | None = None
         self._refreshing = False
         self._refresh_again = False
         self._afk_task: asyncio.Task[None] | None = None
@@ -357,6 +385,72 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         if self._afk_task:
             self._afk_task.cancel()
             self._afk_task = None
+
+    # --- Home Assistant shutdown: the goodbye frame (docs/HA.md, `goodbye`) -------------------
+
+    @callback
+    def async_listen_ha_stop(self) -> None:
+        """Say goodbye to the app when Home Assistant stops, so it can treat the drop of its own
+        HA connection (and this socket) as an expected restart instead of an outage."""
+        self.async_unlisten_ha_stop()
+        self._stop_unsubs = [
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self._async_ha_stopping),
+            self.hass.bus.async_listen(
+                EVENT_CALL_SERVICE,
+                self._async_restart_requested,
+                event_filter=_is_restart_call,
+            ),
+        ]
+
+    @callback
+    def async_unlisten_ha_stop(self) -> None:
+        for unsub in self._stop_unsubs:
+            unsub()
+        self._stop_unsubs = []
+
+    @callback
+    def _async_restart_requested(self, _event: Event) -> None:
+        self._restart_requested_at = time.monotonic()
+
+    def _stop_reason(self) -> str:
+        if self.hass.exit_code == RESTART_EXIT_CODE:
+            return "restart"
+        at = self._restart_requested_at
+        if at is not None and time.monotonic() - at <= RESTART_REQUEST_TTL_SECS:
+            return "restart"
+        return "stop"
+
+    @callback
+    def _async_ha_stopping(self, _event: Event) -> None:
+        """EVENT_HOMEASSISTANT_STOP. A `@callback` on purpose: HA cancels background tasks (the
+        events loop among them) just BEFORE firing this event, and the loop closes the socket as
+        soon as it next runs. Running synchronously inside the event fire, with an eagerly started
+        send, puts the frame on the transport before that close — a coroutine listener would be
+        scheduled after it and find the socket gone."""
+        # The fired once-listener is spent; removing it again on a later unload would log an error.
+        if self._stop_unsubs:
+            self._stop_unsubs.pop(0)
+        # HA is going down: the loop must neither reconnect nor warn about the drop (it
+        # reconnects on the next start anyway).
+        self._closing = True
+        self._ha_stopping = True
+        ws = self._ws
+        if ws is None or ws.closed:
+            _LOGGER.debug("switchboard: HA stopping — no open events socket, no goodbye sent")
+            return
+        reason = self._stop_reason()
+        self.hass.async_create_task(
+            self._async_send_goodbye(ws, reason), f"{DOMAIN}_goodbye", eager_start=True
+        )
+
+    async def _async_send_goodbye(self, ws: aiohttp.ClientWebSocketResponse, reason: str) -> None:
+        try:
+            async with asyncio.timeout(GOODBYE_TIMEOUT_SECS):
+                await ws.send_json({"type": "goodbye", "reason": reason})
+        except (TimeoutError, aiohttp.ClientError, ConnectionError, RuntimeError) as err:
+            _LOGGER.debug("switchboard: goodbye not sent: %s", err)
+        else:
+            _LOGGER.debug("switchboard: sent goodbye (%s)", reason)
 
     # --- connection lookup (used by services) ------------------------------------------------
 
@@ -446,6 +540,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             try:
                 async with self.client.ws_connect() as ws:
                     _LOGGER.debug("switchboard: events websocket connected")
+                    self._ws = ws
                     step = 0
                     # On EVERY connect (first included), re-fetch the snapshot: the event stream
                     # only carries *changes*, so anything that happened between setup's snapshot
@@ -508,7 +603,12 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             except (TimeoutError, aiohttp.ClientError, SwitchboardApiError) as err:
                 _LOGGER.debug("switchboard: events websocket dropped: %s", err)
             except Exception:  # this task must never die; entities freeze if it does
-                _LOGGER.exception("switchboard: unexpected error in events loop")
+                if self._ha_stopping:  # HA is stopping: whatever broke, it is going down anyway
+                    _LOGGER.debug("switchboard: events loop error while closing", exc_info=True)
+                else:
+                    _LOGGER.exception("switchboard: unexpected error in events loop")
+            finally:
+                self._ws = None
             if self._closing:
                 break
             # Disconnected → entities go unavailable instead of freezing at stale values
@@ -529,6 +629,9 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         reauth reloads the entry). The log line stays gated once per outage in case another
         path reports the same rejection.
         """
+        if self._ha_stopping:  # HA is stopping — a reauth flow now would outlive nothing
+            _LOGGER.debug("switchboard: token rejected while closing — no reauth")
+            return
         if not self._reauth_logged:
             self._reauth_logged = True
             _LOGGER.warning("switchboard: API token rejected — starting reauthentication")
@@ -537,7 +640,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
     def _log_access_denied(self) -> None:
         """403: the token is valid but this caller is denied by an ACL. Warn once per outage —
         the retry loop would otherwise repeat it every backoff step."""
-        if self._access_denied_logged:
+        if self._access_denied_logged or self._ha_stopping:
             return
         self._access_denied_logged = True
         _LOGGER.warning(
@@ -559,7 +662,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         UI rather than only in a DEBUG log nobody has enabled.
         """
         seen = err.got.hex()
-        if self._fingerprint_mismatch_logged:
+        if self._fingerprint_mismatch_logged or self._ha_stopping:
             return
         self._fingerprint_mismatch_logged = True
         _LOGGER.warning(
