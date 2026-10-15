@@ -611,6 +611,10 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
         cid = frame.get("connection_id")
         if etype in _OBS_EVENTS:
+            if etype == "stream_delay_changed" and frame.get("peer_id"):
+                # A paired peer's OBS (app 2026-10-15): `connection_id` is a connection ON that
+                # peer, never one of this app's instances — not ours to patch.
+                return False
             inst = data.obs.get(cid)
             if inst is None:
                 return False  # unknown connection; a connections_changed/reload will add it

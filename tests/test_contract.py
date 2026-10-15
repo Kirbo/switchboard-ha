@@ -53,6 +53,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "enabled": True,
         "seconds": 150,
         "restarting": False,
+        "peer_id": None,
     },
     {"type": "home_assistant_connection", "connection_id": CID, "connected": False},
     {"type": "home_assistant_reconnecting", "connection_id": CID, "error": "cert mismatch"},

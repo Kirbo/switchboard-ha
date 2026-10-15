@@ -252,6 +252,19 @@ async def test_obs_events_patch_the_instance(hass: HomeAssistant) -> None:
         }
     )
     assert inst["stream_delay_secs"] is None
+    # A paired peer's OBS (`peer_id` set) is never patched onto ours, even on a matching id.
+    assert not coord._apply(
+        {
+            "type": "stream_delay_changed",
+            "connection_id": CID,
+            "label": "Peer OBS",
+            "enabled": True,
+            "seconds": 90,
+            "restarting": False,
+            "peer_id": "peer-1",
+        }
+    )
+    assert inst["stream_delay_secs"] is None
     await hass.async_block_till_done()
 
 
