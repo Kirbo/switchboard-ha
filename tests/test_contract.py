@@ -78,6 +78,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     {"type": "hotkey_pressed", "combo": "KEY_LEFTCTRL+KEY_M"},
     {"type": "obs_disk_space", "connection_id": CID, "free_mb": 12698, "low": True},
     {"type": "obs_stream_stalled", "connection_id": CID, "seconds": 17, "restarted": True},
+    {"type": "obs_frozen", "connection_id": CID, "frozen": True},
     {
         "type": "action_skipped",
         "rule_id": "rule-1",

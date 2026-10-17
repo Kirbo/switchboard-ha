@@ -1,4 +1,4 @@
-"""Binary sensors: per-OBS connected/streaming/recording + a global AFK sensor."""
+"""Binary sensors: per-OBS connected/streaming/recording/frozen + a global AFK sensor."""
 
 from __future__ import annotations
 
@@ -29,6 +29,9 @@ _OBS_FLAGS = (
     ("connected", "Connected", BinarySensorDeviceClass.CONNECTIVITY),
     ("streaming", "Streaming", BinarySensorDeviceClass.RUNNING),
     ("recording", "Recording", BinarySensorDeviceClass.RUNNING),
+    # OBS itself froze (render loop stopped / never answers) — on = a problem only an OBS
+    # restart fixes; the one to notify your phone on.
+    ("frozen", "Frozen", BinarySensorDeviceClass.PROBLEM),
 )
 
 
@@ -77,7 +80,7 @@ class AlertPausedSensor(SwitchboardAlertEntity, BinarySensorEntity):
 
 
 class ObsFlagSensor(SwitchboardObsEntity, BinarySensorEntity):
-    """A boolean flag (connected/streaming/recording) of one OBS instance."""
+    """A boolean flag (connected/streaming/recording/frozen) of one OBS instance."""
 
     def __init__(self, coordinator, entry, connection_id, key, name, device_class) -> None:
         super().__init__(coordinator, entry, connection_id)

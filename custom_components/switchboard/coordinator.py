@@ -79,6 +79,7 @@ _OBS_EVENTS = (
     "obs_scenes_changed",
     "obs_delay_changed",
     "stream_delay_changed",
+    "obs_frozen",
 )
 
 # Events carrying a full NowPlaying payload for a track/context change.
@@ -252,6 +253,8 @@ def _obs_from_snapshot(o: dict[str, Any]) -> dict[str, Any]:
         "current_scene": o.get("current_scene"),
         "stream_started_ms": o.get("stream_started_ms"),
         "stream_delay_secs": o.get("stream_delay_secs"),
+        # OBS itself is frozen (app 2026-10-17, additive; absent from older apps → False).
+        "frozen": o.get("frozen", False),
         "scenes": [],
     }
 
@@ -798,6 +801,10 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             elif etype == "stream_delay_changed":
                 # A scene change flipped the delay on this instance.
                 inst["stream_delay_secs"] = frame.get("seconds") if frame.get("enabled") else None
+            elif etype == "obs_frozen":
+                # OBS itself stopped rendering/answering (or recovered) — only an OBS restart
+                # fixes it; the app stops restarting the stream meanwhile.
+                inst["frozen"] = bool(frame.get("frozen"))
             return True
 
         if etype == "machine_state_changed":

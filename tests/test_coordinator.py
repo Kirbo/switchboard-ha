@@ -292,6 +292,18 @@ async def test_stream_start_stop_derives_the_start_timestamp(hass: HomeAssistant
     assert inst["stream_started_ms"] == started
 
 
+async def test_obs_frozen_flips_the_instance_flag(hass: HomeAssistant) -> None:
+    """`obs_frozen` (app 2026-10-17) keeps the per-instance `frozen` flag — the Frozen problem
+    sensor — in step with the app, both ways."""
+    coord = make_coordinator(hass)
+    inst = coord.data.obs[CID]
+    assert inst["frozen"] is False
+    assert coord._apply({"type": "obs_frozen", "connection_id": CID, "frozen": True})
+    assert inst["frozen"] is True
+    assert coord._apply({"type": "obs_frozen", "connection_id": CID, "frozen": False})
+    assert inst["frozen"] is False
+
+
 async def test_obs_event_for_an_unknown_connection_is_ignored(hass: HomeAssistant) -> None:
     coord = make_coordinator(hass)
     assert (

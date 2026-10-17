@@ -16,7 +16,7 @@ entities, and lets HA drive Switchboard actions through services.
 
 **Entities** (one device per OBS / Twitch connection, plus a Switchboard service device):
 
-- **Binary sensors** — per OBS connection: `Connected`, `Streaming`, `Recording`; per Twitch
+- **Binary sensors** — per OBS connection: `Connected`, `Streaming`, `Recording`, `Frozen` (a problem sensor: OBS itself stopped rendering or answering — restart OBS); per Twitch
   connection: `Live`; global: `AFK` (attributes: `threshold_secs` — how long idle before the
   idle→AFK automation fires, with any per-scene override applied, `null` = never — and
   `snooze_until`), `Input overlays visible` (the keyboard/mouse/gamepad overlays are shown on
