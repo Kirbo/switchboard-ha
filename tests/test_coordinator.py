@@ -627,3 +627,69 @@ async def test_an_idle_preset_is_not_mistaken_for_a_deleted_one(hass: HomeAssist
     coord = make_coordinator(hass)
     assert coord._apply(_alert_frame(queued=0, merged=0, showing=None))
     assert ALERT_PRESET in coord.data.alerts
+
+
+def _status_entry(key: str, state: str, **fields: Any) -> dict[str, Any]:
+    integration, component, ident = key.split("/", 2)
+    return {
+        "key": key,
+        "integration": integration,
+        "component": component,
+        "connection_id": None,
+        "subject": ident,
+        "label": None,
+        "state": state,
+        "since_ms": 1760800000000,
+        "last_error": None,
+        "last_error_ms": None,
+        "drops": 0,
+        "reconnects": 0,
+        "crashes": 0,
+        "queued": None,
+        **fields,
+    }
+
+
+async def test_connection_status_frames_patch_the_rows(hass: HomeAssistant) -> None:
+    """docs/HA.md "Connection status": seeded from /api/state, a changed row replaced by key, an
+    identical frame a no-op, a removal drops the row; a malformed frame changes nothing."""
+    coord = make_coordinator(hass)
+    assert coord.data.connection_status is not None
+    seeded = len(coord.data.connection_status)
+    key = "system/loop/insights"
+    frame = {"type": "connection_status_changed", "entry": _status_entry(key, "crashed", crashes=1)}
+    assert coord._apply(frame)
+    assert coord.data.connection_status[key]["crashes"] == 1
+    assert not coord._apply(frame)
+    assert coord._apply(
+        {
+            "type": "connection_status_changed",
+            "entry": _status_entry(key, "connected", crashes=1, reconnects=1),
+        }
+    )
+    assert coord.data.connection_status[key]["state"] == "connected"
+    assert not coord._apply({"type": "connection_status_changed", "entry": {"state": "down"}})
+    assert coord._apply({"type": "connection_status_removed", "key": key})
+    assert len(coord.data.connection_status) == seeded
+    assert not coord._apply({"type": "connection_status_removed", "key": key})
+
+
+async def test_an_unknown_status_state_never_reads_as_fine(hass: HomeAssistant) -> None:
+    coord = make_coordinator(hass)
+    key = "obs/connection/future"
+    assert coord._apply(
+        {"type": "connection_status_changed", "entry": _status_entry(key, "from_the_future")}
+    )
+    assert coord.data.connection_status[key]["state"] == "down"
+
+
+async def test_a_status_frame_creates_the_rows_against_an_older_snapshot(
+    hass: HomeAssistant,
+) -> None:
+    coord = make_coordinator(hass)
+    coord.data.connection_status = None
+    assert not coord._apply({"type": "connection_status_removed", "key": "x/y/z"})
+    assert coord._apply(
+        {"type": "connection_status_changed", "entry": _status_entry("x/y/z", "down")}
+    )
+    assert coord.data.connection_status == {"x/y/z": coord.data.connection_status["x/y/z"]}

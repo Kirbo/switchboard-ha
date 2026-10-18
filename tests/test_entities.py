@@ -264,3 +264,46 @@ async def test_unload(hass: HomeAssistant) -> None:
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.entry_id not in hass.data.get(DOMAIN, {})
+
+
+STATUS = "sensor.switchboard_test_connection_status"
+
+
+async def test_connection_status_sensor_rolls_the_rows_up(hass: HomeAssistant) -> None:
+    """docs/HA.md "Connection status": the worst state, the problem count, each integration's
+    worst state and every row; live from the push events."""
+    entry = await _setup(hass)
+    state = hass.states.get(STATUS)
+    assert state.state == "connected"
+    assert state.attributes["problems"] == 0
+    assert state.attributes["by_integration"] == {"twitch": "connected"}
+
+    coord = hass.data[DOMAIN][entry.entry_id]
+    coord._handle_frame(
+        {
+            "type": "connection_status_changed",
+            "entry": {
+                "key": "obs/connection/o1",
+                "integration": "obs",
+                "component": "connection",
+                "connection_id": "o1",
+                "subject": None,
+                "label": None,
+                "state": "reconnecting",
+                "since_ms": 1760800000000,
+                "last_error": "connect timed out",
+                "last_error_ms": 1760800000000,
+                "drops": 1,
+                "reconnects": 0,
+                "crashes": 0,
+                "queued": None,
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(STATUS)
+    assert state.state == "reconnecting"
+    assert state.attributes["problems"] == 1
+    assert state.attributes["by_integration"]["obs"] == "reconnecting"
+    assert [r["key"] for r in state.attributes["rows"]][0] == "obs/connection/o1"
+    assert state.attributes["rows"][0]["last_error"] == "connect timed out"

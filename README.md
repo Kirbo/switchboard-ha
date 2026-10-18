@@ -42,7 +42,14 @@ entities, and lets HA drive Switchboard actions through services.
   `Version` (with any pending-update attributes); per **alert preset**: `<preset> queued` — how
   many alerts are waiting (attributes: `showing` = the alert kind on screen right now, e.g.
   `twitch_follow`, `null` = nothing; `dropped` = alerts thrown away since the app started;
-  `merged` = alerts folded into a storm summary since the app started; `paused`; `preset_id`).
+  `merged` = alerts folded into a storm summary since the app started; `paused`; `preset_id`);
+  `Connection status` (Switchboard 2026-10-18 or newer; diagnostic) — the worst state of every
+  connection, subscription and background task the app runs (`connected` while all are fine;
+  `connecting` / `reconnecting` / `down` / `crashed`; `disabled` when everything reporting is
+  off; unknown against an older app), live from the app's push. Attributes: `problems` (how many
+  need attention), `by_integration` (each integration's worst state, e.g. `obs: reconnecting`) and
+  `rows` (every row with its state, the session's `drops` / `reconnects` / `crashes` and the last
+  error) — e.g. notify when `state` becomes `down` or `crashed`.
 
 Alert-preset entities sit on the Switchboard service device and follow the app live: a preset
 created in Switchboard gets its two entities on its first queue change, a deleted one has them

@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, SPOTIFY_PAUSED, SPOTIFY_PLAYING, SPOTIFY_STOPPED
-from .coordinator import SwitchboardCoordinator
+from .coordinator import STATUS_SEVERITY, SwitchboardCoordinator, worst_status
 from .entity import (
     SwitchboardAlertEntity,
     SwitchboardHubEntity,
@@ -43,6 +43,7 @@ async def async_setup_entry(
         SpotifySensor(coordinator, entry),
         AppVersionSensor(coordinator, entry),
         FocusedAppSensor(coordinator, entry),
+        ConnectionStatusSensor(coordinator, entry),
     ]
     for cid in coordinator.obs_ids():
         entities += [
@@ -236,6 +237,50 @@ class SpotifySensor(SwitchboardHubEntity, SensorEntity):
                 "duration_ms",
             )
             if now.get(k)
+        }
+
+
+class ConnectionStatusSensor(SwitchboardHubEntity, SensorEntity):
+    """The app's connection status rolled up (docs/HA.md "Connection status", app 2026-10-18+).
+
+    State = the worst state of every connection, subscription and background loop the app runs
+    (`connected` while all are fine; `connecting` / `reconnecting` / `down` / `crashed`;
+    `disabled` when everything reporting is switched off); unknown against an older app.
+    Attributes: `problems` (how many rows are worse than connected), `by_integration` (each
+    integration's worst state) and `rows` (every row: integration, component, the connection id /
+    subject / label naming it, its state, the session's drops / reconnects / crashes and the last
+    error — one short, redacted line).
+    """
+
+    _attr_name = "Connection status"
+    _attr_icon = "mdi:lan-connect"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(STATUS_SEVERITY)
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_connection_status"
+
+    @property
+    def native_value(self) -> str | None:
+        rows = self.coordinator.data.connection_status
+        return worst_status(rows) if rows is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        rows = self.coordinator.data.connection_status or {}
+        by: dict[str, dict[str, dict[str, Any]]] = {}
+        for key, row in rows.items():
+            by.setdefault(row["integration"], {})[key] = row
+        return {
+            "problems": sum(
+                1
+                for r in rows.values()
+                if STATUS_SEVERITY[r["state"]] > STATUS_SEVERITY["connected"]
+            ),
+            "by_integration": {name: worst_status(group) for name, group in sorted(by.items())},
+            "rows": [rows[k] for k in sorted(rows)],
         }
 
 

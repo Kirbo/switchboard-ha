@@ -442,6 +442,28 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     },
     {"type": "opendeck_event", "source": "opendeck", "fields": [["button", "scene_1"]]},
     {"type": "navigate_to_view", "view": "settings", "anchor": "gpu", "source": "OpenDeck"},
+    # docs/HA.md "Connection status" (2026-10-18, additive): one whole row, replaced by key; and a
+    # row leaving the registry.
+    {
+        "type": "connection_status_changed",
+        "entry": {
+            "key": f"obs/connection/{CID}",
+            "integration": "obs",
+            "component": "connection",
+            "connection_id": CID,
+            "subject": None,
+            "label": None,
+            "state": "reconnecting",
+            "since_ms": 1760800000000,
+            "last_error": "connect timed out",
+            "last_error_ms": 1760800000000,
+            "drops": 2,
+            "reconnects": 1,
+            "crashes": 0,
+            "queued": None,
+        },
+    },
+    {"type": "connection_status_removed", "key": "twitch/chat/somechannel"},
 ]
 
 # docs/HA.md "Event stream" → "resync" (app 2026-10-13) — verbatim. NOT an event (it concerns one
@@ -554,6 +576,26 @@ API_STATE: dict[str, Any] = {
             "merged": 14,
         }
     },
+    # docs/HA.md "Connection status" (2026-10-18, additive; `[]` before anything reported,
+    # absent on older apps).
+    "connection_status": [
+        {
+            "key": f"twitch/eventsub/{CID}",
+            "integration": "twitch",
+            "component": "eventsub",
+            "connection_id": CID,
+            "subject": None,
+            "label": None,
+            "state": "connected",
+            "since_ms": 1760800000000,
+            "last_error": None,
+            "last_error_ms": None,
+            "drops": 0,
+            "reconnects": 0,
+            "crashes": 0,
+            "queued": None,
+        }
+    ],
     "version": "2026.6.10",
     "update": {"version": "2026.7.1", "body": "notes", "ready": False},
 }
@@ -664,6 +706,29 @@ def test_alert_queue_frames_carry_every_documented_field() -> None:
     for frame in frames:
         assert set(frame) == row_keys | {"type", "preset_id"}
     assert any(f["name"] == "" for f in frames), "the deleted-preset frame is represented"
+
+
+def test_api_state_seeds_the_connection_status_rows_by_key() -> None:
+    """`connection_status` is additive (2026-10-18): an array on the wire, keyed here; an older app
+    omits it (unknown, not "all fine")."""
+    data = _state_from_snapshot(API_STATE)
+    assert data.connection_status is not None
+    row = data.connection_status[f"twitch/eventsub/{CID}"]
+    assert row["state"] == "connected"
+    assert row["connection_id"] == CID
+    older = {k: v for k, v in API_STATE.items() if k != "connection_status"}
+    assert _state_from_snapshot(older).connection_status is None
+    assert _state_from_snapshot({**API_STATE, "connection_status": []}).connection_status == {}
+
+
+def test_connection_status_frames_carry_the_rows_fields() -> None:
+    """The changed event carries one whole `/api/state` row as `entry`."""
+    row_keys = set(API_STATE["connection_status"][0])
+    for frame in DOCUMENTED_EVENTS:
+        if frame["type"] == "connection_status_changed":
+            assert set(frame["entry"]) == row_keys
+        if frame["type"] == "connection_status_removed":
+            assert set(frame) == {"type", "key"}
 
 
 def test_api_state_tolerates_an_empty_snapshot() -> None:

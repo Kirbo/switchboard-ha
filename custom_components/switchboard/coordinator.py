@@ -149,6 +149,12 @@ class SwitchboardData:
     # from the snapshot, kept live by `alert_queue_changed`; a deleted preset's last all-zero
     # frame drops its row (and the entities built on it go with it).
     alerts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Every connection, subscription and background loop of the app with its state and session
+    # counters (app 2026-10-18, additive on /api/state as `connection_status`, an array): key ->
+    # row. `None` = an app older than the contract (the sensor then reads unknown). Seeded from
+    # the snapshot, kept live by `connection_status_changed` (a whole row, replaced by key) and
+    # `connection_status_removed` (drop by key).
+    connection_status: dict[str, dict[str, Any]] | None = None
 
     @property
     def watched_app_active(self) -> bool:
@@ -226,6 +232,64 @@ def _is_deleted_alert_frame(frame: dict[str, Any]) -> bool:
         and not frame.get("dropped")
         and not frame.get("merged")
     )
+
+
+# docs/HA.md "Connection status": the states, and how loudly each reads (higher is worse; a
+# switched-off row is quieter than a connected one).
+STATUS_SEVERITY: dict[str, int] = {
+    "disabled": 0,
+    "connected": 1,
+    "connecting": 2,
+    "reconnecting": 3,
+    "down": 4,
+    "crashed": 5,
+}
+
+
+def _status_row(raw: Any) -> dict[str, Any] | None:
+    """One `/api/state.connection_status` row (or a `connection_status_changed` entry) → our
+    fields; `None` without a key. An unknown state reads as `down`: a consumer must never show a
+    state it cannot name as fine."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("key"), str) or not raw["key"]:
+        return None
+
+    def count(key: str) -> int:
+        value = raw.get(key)
+        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+    def text(key: str) -> str | None:
+        value = raw.get(key)
+        return value if isinstance(value, str) and value else None
+
+    state = raw.get("state")
+    return {
+        "key": raw["key"],
+        "integration": text("integration") or "system",
+        "component": text("component") or "",
+        "connection_id": text("connection_id"),
+        "subject": text("subject"),
+        "label": text("label"),
+        "state": state if state in STATUS_SEVERITY else "down",
+        "last_error": text("last_error"),
+        "drops": count("drops"),
+        "reconnects": count("reconnects"),
+        "crashes": count("crashes"),
+    }
+
+
+def _status_from_snapshot(raw: Any) -> dict[str, dict[str, Any]] | None:
+    """`/api/state.connection_status` (an array) → key -> row; `None` when the app does not send
+    it (older than 2026-10-18)."""
+    if not isinstance(raw, list):
+        return None
+    rows = (_status_row(r) for r in raw)
+    return {r["key"]: r for r in rows if r is not None}
+
+
+def worst_status(rows: dict[str, dict[str, Any]]) -> str | None:
+    """The worst state among the rows (docs/HA.md ranking); `None` for no rows."""
+    states = [r["state"] for r in rows.values()]
+    return max(states, key=lambda s: STATUS_SEVERITY.get(s, 4)) if states else None
 
 
 def _alerts_from_snapshot(raw: Any) -> dict[str, dict[str, Any]]:
@@ -361,6 +425,7 @@ def _state_from_snapshot(
         input_overlay_visible=raw.get("input_overlay_visible", True) is not False,
         input_overlay_auto_show_at_ms=raw.get("input_overlay_auto_show_at_ms"),
         alerts=_alerts_from_snapshot(raw.get("alerts")),
+        connection_status=_status_from_snapshot(raw.get("connection_status")),
         # Preserved across a resync — /api/state doesn't carry them, /api/afk does.
         afk_threshold_secs=previous.afk_threshold_secs if previous else None,
         afk_snooze_until_ms=previous.afk_snooze_until_ms if previous else None,
@@ -1025,6 +1090,26 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 return False
             data.alerts[pid] = row
             return True
+
+        if etype == "connection_status_changed":
+            # One connection-status row changed (docs/HA.md "Connection status"): the whole row,
+            # replaced by key. Receiving it proves the app is new enough even if the snapshot
+            # predates the slice.
+            row = _status_row(frame.get("entry"))
+            if row is None:
+                return False
+            if data.connection_status is None:
+                data.connection_status = {}
+            if data.connection_status.get(row["key"]) == row:
+                return False
+            data.connection_status[row["key"]] = row
+            return True
+
+        if etype == "connection_status_removed":
+            key = frame.get("key")
+            if not isinstance(key, str) or data.connection_status is None:
+                return False
+            return data.connection_status.pop(key, None) is not None
 
         if etype == "variable_changed":
             # One user variable set/incremented; the full map was seeded from /api/state.
