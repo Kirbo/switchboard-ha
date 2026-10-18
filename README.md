@@ -31,7 +31,8 @@ entities, and lets HA drive Switchboard actions through services.
   per **alert preset** (Switchboard 2026-10-15 or newer): `<preset> paused` — the preset's alert
   queue is held by hand (`switchboard.alert_pause`, a deck key, a rule or the app's editor).
 - **Sensors** — per OBS connection: current `Scene` (attribute: that instance's `scenes` list),
-  `Stream started` (timestamp — derive uptime from it) and `Stream delay` (seconds, `0` = off);
+  `Stream started` (timestamp — derive uptime from it; an automatic restart the app runs keeps
+  it) and `Stream delay` (seconds, `0` = off);
   per Twitch connection: `Viewers`, `Chatters`, `Followers`, `Subscribers` (the last two are the
   app's audience-tracker totals — unknown until it has run once), `Category` (attributes: category
   id, box-art URL, title, `started_at_ms`) and `Live since` (timestamp); global: `Spotify` playback

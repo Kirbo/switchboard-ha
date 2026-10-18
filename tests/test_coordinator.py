@@ -292,6 +292,60 @@ async def test_stream_start_stop_derives_the_start_timestamp(hass: HomeAssistant
     assert inst["stream_started_ms"] == started
 
 
+async def test_a_restart_keeps_the_stream_start_anchor(hass: HomeAssistant) -> None:
+    """SB-00250: an automatic restart the app runs (`restart: true`, docs/HA.md field notes) is
+    not a stream end — its `stopped` must not clear `stream_started_ms` and its `started` must
+    not move it, or the "stream started" sensor resets mid-stream."""
+    coord = make_coordinator(hass)
+    inst = coord.data.obs[CID]
+    inst["streaming"] = True
+    inst["stream_started_ms"] = 1_700_000_000_000
+
+    for state, active in (
+        ("stopping", False),
+        ("stopped", False),
+        ("starting", True),
+        ("started", True),
+    ):
+        coord._apply(
+            {
+                "type": "obs_stream_state",
+                "connection_id": CID,
+                "active": active,
+                "state": state,
+                "restart": True,
+            }
+        )
+        assert inst["streaming"] is active
+        assert inst["stream_started_ms"] == 1_700_000_000_000, state
+
+    # A real stop (no `restart`, as from an older app) still ends the stream.
+    coord._apply(
+        {"type": "obs_stream_state", "connection_id": CID, "active": False, "state": "stopped"}
+    )
+    assert inst["stream_started_ms"] is None
+
+
+async def test_a_restart_started_with_no_known_anchor_derives_one(hass: HomeAssistant) -> None:
+    """Connected mid-restart, nothing is anchored yet: the restart's `started` still derives a
+    start (the next resync replaces it with the app's authoritative one)."""
+    coord = make_coordinator(hass)
+    inst = coord.data.obs[CID]
+    inst["streaming"] = False
+    inst["stream_started_ms"] = None
+
+    coord._apply(
+        {
+            "type": "obs_stream_state",
+            "connection_id": CID,
+            "active": True,
+            "state": "started",
+            "restart": True,
+        }
+    )
+    assert isinstance(inst["stream_started_ms"], int)
+
+
 async def test_obs_frozen_flips_the_instance_flag(hass: HomeAssistant) -> None:
     """`obs_frozen` (app 2026-10-17) keeps the per-instance `frozen` flag — the Frozen problem
     sensor — in step with the app, both ways."""

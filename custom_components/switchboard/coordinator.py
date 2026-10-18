@@ -785,11 +785,19 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 inst["connected"] = bool(frame.get("connected"))
             elif etype == "obs_stream_state":
                 active = bool(frame.get("active"))
+                # `restart: true` (app 2026-10-18, docs/HA.md field notes): this state belongs to
+                # an automatic restart the app runs — the stream goes on, and the app keeps its
+                # start. So its `stopped` must not clear the anchor and its `started` must not
+                # move it, or the "stream started" sensor would reset mid-stream (SB-00250).
+                restart = bool(frame.get("restart"))
                 # The event carries no start timestamp; derive it on the off→on edge (the next
-                # resync replaces it with the authoritative `stream_started_ms`).
+                # resync replaces it with the authoritative `stream_started_ms`). A restart's
+                # `started` keeps the original anchor; it only derives one when none is known
+                # (e.g. Home Assistant connected mid-restart).
                 if active and not inst.get("streaming"):
-                    inst["stream_started_ms"] = int(time.time() * 1000)
-                elif not active:
+                    if not restart or inst.get("stream_started_ms") is None:
+                        inst["stream_started_ms"] = int(time.time() * 1000)
+                elif not active and not restart:
                     inst["stream_started_ms"] = None
                 inst["streaming"] = active
             elif etype == "obs_record_state":
