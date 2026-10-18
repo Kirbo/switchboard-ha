@@ -71,7 +71,7 @@ class FramesClient(FakeClient):
             await asyncio.sleep(0)
         return API_STATE
 
-    def ws_connect(self) -> Any:
+    def ws_connect(self, resume: Any = None) -> Any:
         client = self
 
         class _Ws:

@@ -18,7 +18,8 @@ because the bearer token would be readable by anything able to intercept the con
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 import aiohttp
@@ -57,6 +58,17 @@ class SwitchboardRateLimitError(SwitchboardApiError):
 # even the first wait buys a couple of writes back — the contract promises recovery "within a
 # second or two", and giving up sooner would fail an automation the app was only asking to slow.
 RATE_LIMIT_BACKOFF: tuple[float, ...] = (0.25, 0.5, 1.0)
+
+# The events websocket's liveness ping (aiohttp `heartbeat`): a ping every 30 s, and a socket that
+# leaves it unanswered for half that is closed as dead. This is what catches a link that died
+# without a FIN — the app's PC slept, Wi-Fi flapped, a NAT forgot the flow — which would otherwise
+# read as a healthy, silent socket forever while every entity froze on its last value.
+WS_HEARTBEAT_SECS = 30.0
+
+# How long the websocket upgrade may take, TCP + TLS + HTTP 101 together. Without it, a host that
+# took the connection but never answered (the app frozen mid-restart) held the reconnect loop for
+# the session's default five minutes.
+WS_HANDSHAKE_TIMEOUT_SECS = 10.0
 
 
 def build_ssl(verify_ssl: bool, fingerprint: str | None) -> aiohttp.Fingerprint | bool | None:
@@ -199,11 +211,25 @@ class SwitchboardClient:
         except aiohttp.ClientError as err:
             raise SwitchboardApiError(f"command failed: {err}") from err
 
-    def ws_connect(self) -> Any:
-        """Open the events websocket (caller manages the context + reconnects)."""
-        return self._session.ws_connect(
-            self.ws_url,
-            headers=self._headers(),
-            ssl=self._ssl,
-            heartbeat=30,
-        )
+    @asynccontextmanager
+    async def ws_connect(
+        self, resume: tuple[int, str] | None = None
+    ) -> AsyncIterator[aiohttp.ClientWebSocketResponse]:
+        """Open the events websocket (caller manages the context + reconnects).
+
+        `resume` = (last `seq` seen, its `boot_id`) asks the app to replay what this client missed
+        since (docs/HA.md "Resume"): `?resume=<seq>&boot=<boot_id>`. None = a plain connect.
+        """
+        params = {"resume": str(resume[0]), "boot": resume[1]} if resume else None
+        async with asyncio.timeout(WS_HANDSHAKE_TIMEOUT_SECS):
+            ws = await self._session.ws_connect(
+                self.ws_url,
+                headers=self._headers(),
+                ssl=self._ssl,
+                heartbeat=WS_HEARTBEAT_SECS,
+                params=params,
+            )
+        try:
+            yield ws
+        finally:
+            await ws.close()

@@ -11,6 +11,7 @@ pointless reauth flow).
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -134,3 +135,77 @@ async def test_other_http_errors_are_not_retried() -> None:
     with pytest.raises(SwitchboardApiError):
         await _client(session).send_command({"action_type": "afk_reset_idle"})
     assert session.calls == 1
+
+
+# --- the events websocket ----------------------------------------------------------------------
+
+
+class _Ws:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _WsSession:
+    """`ws_connect` records its arguments; `hang` makes the upgrade never answer."""
+
+    def __init__(self, *, hang: bool = False) -> None:
+        self.hang = hang
+        self.kwargs: dict[str, Any] = {}
+        self.ws = _Ws()
+
+    async def ws_connect(self, url: str, **kwargs: Any) -> _Ws:
+        self.kwargs = {"url": url, **kwargs}
+        if self.hang:
+            await asyncio.Event().wait()  # a host that took the connection and never answers
+        return self.ws
+
+
+def _ws_client(session: _WsSession) -> SwitchboardClient:
+    return SwitchboardClient(
+        session,  # type: ignore[arg-type]
+        "192.0.2.10",
+        38474,
+        "tok",
+        verify_ssl=False,
+        fingerprint="ab" * 32,
+    )
+
+
+async def test_the_events_socket_pings_and_closes_on_exit() -> None:
+    """The heartbeat is what catches a socket that died without a FIN (a slept PC, a Wi-Fi flap):
+    aiohttp pings every WS_HEARTBEAT_SECS and closes a socket that leaves it unanswered."""
+    session = _WsSession()
+    async with _ws_client(session).ws_connect() as ws:
+        assert ws is session.ws
+    assert session.kwargs["url"] == "wss://192.0.2.10:38474/api/events/ws"
+    assert session.kwargs["heartbeat"] == api_mod.WS_HEARTBEAT_SECS
+    assert 0 < api_mod.WS_HEARTBEAT_SECS <= 30, "a dead link must be noticed within a minute"
+    assert session.kwargs["params"] is None, "a plain connect asks for no resume"
+    assert session.kwargs["headers"] == {"Authorization": "Bearer tok"}
+    assert session.ws.closed, "the socket is closed when the context ends"
+
+
+async def test_a_resume_rides_the_upgrade_url() -> None:
+    session = _WsSession()
+    async with _ws_client(session).ws_connect(resume=(41, "boot-1")):
+        pass
+    assert session.kwargs["params"] == {"resume": "41", "boot": "boot-1"}
+
+
+async def test_the_socket_is_closed_when_the_body_raises() -> None:
+    session = _WsSession()
+    with pytest.raises(RuntimeError):
+        async with _ws_client(session).ws_connect():
+            raise RuntimeError("boom")
+    assert session.ws.closed
+
+
+async def test_an_upgrade_that_never_answers_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without the deadline a frozen host held the reconnect loop for aiohttp's default 5 min."""
+    monkeypatch.setattr(api_mod, "WS_HANDSHAKE_TIMEOUT_SECS", 0)
+    with pytest.raises(TimeoutError):
+        async with _ws_client(_WsSession(hang=True)).ws_connect():
+            pytest.fail("the hung upgrade must not yield a socket")

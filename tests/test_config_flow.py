@@ -23,8 +23,10 @@ from custom_components.switchboard.config_flow import (
 from custom_components.switchboard.const import (
     CONF_ALLOW_NON_ADMIN_SERVICES,
     CONF_FINGERPRINT,
+    CONF_LATE_EVENT_MAX_AGE,
     CONF_MIRROR_CHAT_TEXT,
     CONF_MIRROR_MODERATION_TARGETS,
+    DEFAULT_LATE_EVENT_MAX_AGE,
     DOMAIN,
     ISSUE_FINGERPRINT_MISMATCH,
 )
@@ -179,6 +181,10 @@ async def test_options_flow_defaults_chat_text_off_and_persists_the_choice(hass)
         if k.schema == CONF_ALLOW_NON_ADMIN_SERVICES
     )
     assert non_admin_default is False, "the services must be admin-only by default (SB-00231)"
+    late_default = next(
+        k.default() for k in result["data_schema"].schema if k.schema == CONF_LATE_EVENT_MAX_AGE
+    )
+    assert late_default == DEFAULT_LATE_EVENT_MAX_AGE == 60, "a replay over a minute old is late"
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -189,6 +195,7 @@ async def test_options_flow_defaults_chat_text_off_and_persists_the_choice(hass)
         CONF_MIRROR_CHAT_TEXT: True,
         CONF_MIRROR_MODERATION_TARGETS: False,
         CONF_ALLOW_NON_ADMIN_SERVICES: False,
+        CONF_LATE_EVENT_MAX_AGE: DEFAULT_LATE_EVENT_MAX_AGE,
     }
 
 
@@ -203,6 +210,8 @@ def test_the_option_and_the_issue_have_user_facing_strings():
             CONF_MIRROR_MODERATION_TARGETS in strings["options"]["step"]["init"]["data_description"]
         )
         assert CONF_ALLOW_NON_ADMIN_SERVICES in strings["options"]["step"]["init"]["data"]
+        assert CONF_LATE_EVENT_MAX_AGE in strings["options"]["step"]["init"]["data"]
+        assert CONF_LATE_EVENT_MAX_AGE in strings["options"]["step"]["init"]["data_description"]
         assert (
             CONF_ALLOW_NON_ADMIN_SERVICES in strings["options"]["step"]["init"]["data_description"]
         )

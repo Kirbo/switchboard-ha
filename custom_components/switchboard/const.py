@@ -34,6 +34,14 @@ CONF_MIRROR_MODERATION_TARGETS = "mirror_moderation_targets"
 # Assistant's own admin services.
 CONF_ALLOW_NON_ADMIN_SERVICES = "allow_non_admin_services"
 
+# How old (seconds) a REPLAYED event may be and still fire on the HA bus. After a dropped socket
+# the app replays what this client missed (docs/HA.md "Resume"); the sensors take every replayed
+# frame — state is state, the newest wins — but an automation trigger that fires minutes late is
+# wrong (a light flashing for a follow that happened while the link was down). Older replays update
+# the entities and are not fired. 0 = never fire a replayed event.
+CONF_LATE_EVENT_MAX_AGE = "late_event_max_age"
+DEFAULT_LATE_EVENT_MAX_AGE = 60
+
 # Repairs issue keys (strings.json `issues`), suffixed with the entry id per instance.
 ISSUE_FINGERPRINT_MISMATCH = "fingerprint_mismatch"
 

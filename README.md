@@ -207,6 +207,7 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 |---|---|---|
 | **Mirror chat text onto the event bus** | off | With it off, `twitch_chat_message` still reaches the HA bus for every chat line — so chat can be counted — but with `author` and `text` set to `null`. Turn it on to receive the names and the words (they still need the `read_events_sensitive` scope and the app's `full` chat-detail setting). |
 | **Mirror moderated viewers onto the event bus** | off | With it off, `twitch_moderation` still reaches the HA bus with the action and outcome, but with `target_login`, `target_user_id`, `reason` and `error` set to `null`. Turn it on to receive who was moderated (still needs the `read_events_sensitive` scope). |
+| **Fire replayed events up to this age (seconds)** | 60 | After a dropped connection, Switchboard replays the events Home Assistant missed (see *Staying connected* below). Every replayed event updates the entities, but one older than this is **not** fired as a `switchboard_event`, so an automation never reacts minutes after the fact. `0` = never fire a replayed event. |
 | **Allow non-admin Home Assistant users to call Switchboard services** | off | With it off, only Home Assistant **administrators** can call the `switchboard.*` services; a non-admin user gets *Unauthorized*. Automations and other calls with no user behind them always run. See the security note below. |
 
 > **Why off by default.** Home Assistant's recorder stores every custom event that isn't excluded
@@ -258,6 +259,36 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 > but without the scope its `author` and `text` are `null` — and this integration nulls them itself
 > unless the **Mirror chat text** option is on (see Options). Tokens paired before the split keep the
 > scope automatically; new ones need it ticked on the plugin's card in Switchboard.
+
+## Staying connected
+
+The integration recovers on its own from a Switchboard restart or update, its PC sleeping and
+waking, a network flap, or Home Assistant restarting — nothing to reload.
+
+- **Reconnect forever.** The events websocket redials on a ladder of 1, 2, 3, 5, 10, 15, 30, 45 and
+  then every 60 s, each wait spread ±20 % so a restarting app is not redialled by every client at
+  once. The ladder only resets once a connect is fully synced, so an app that accepts the socket
+  but fails its reads is not hammered.
+- **Dead links are noticed.** A ping every 30 s closes a socket left unanswered for 15 s — a link
+  that died without saying so (a sleeping PC, a dropped Wi-Fi) otherwise looks healthy forever. An
+  upgrade the app never answers gives up after 10 s.
+- **Unavailable while down.** Every entity goes `unavailable` the moment the link drops, never
+  frozen at a stale value, and comes back once the link is synced again.
+- **Resume, not a gap.** Against a Switchboard that numbers its events (`seq` / `boot_id`,
+  docs/HA.md "Resume"), a reconnect asks the app to replay what Home Assistant missed — the
+  entities then end exactly where they would have without the drop, and `/api/state` is not
+  re-read. Each replayed event is applied **once** (one already seen before the drop is skipped,
+  so nothing fires twice). Replayed events are marked `replayed: true` with their original `ts`.
+  **Late events update sensors but do not trigger automations:** a replayed event older than the
+  *Fire replayed events up to this age* option (60 s by default) moves the entities but is not
+  fired as a `switchboard_event` — a light flashing for a follow that happened five minutes ago,
+  while the link was down, is wrong. When the app cannot replay (too far back, or it restarted) it
+  says so and the integration re-reads the full snapshot. Nothing is written to disk: an entry
+  reload or a Home Assistant restart re-reads the snapshot, as does every reconnect to an older
+  Switchboard.
+- **What needs you.** A revoked token (`401`) starts re-authentication and stops redialling (a
+  dead token cannot come back by retrying); a certificate that no longer matches the pin raises a
+  repairs issue and keeps redialling without adopting it (see *Configuration*).
 
 ## Notes
 

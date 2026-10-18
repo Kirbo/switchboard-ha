@@ -56,7 +56,7 @@ class ScriptedClient(FakeClient):
         self.attempts = 0
         self.coord: SwitchboardCoordinator | None = None
 
-    def ws_connect(self) -> Any:
+    def ws_connect(self, resume: Any = None) -> Any:
         step = self.script[self.attempts]
         self.attempts += 1
         if self.attempts >= len(self.script):

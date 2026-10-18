@@ -271,7 +271,7 @@ async def test_the_events_loop_is_quiet_and_stops_after_the_goodbye(
     attempts = 0
 
     class _Client(FakeClient):
-        def ws_connect(self) -> Any:
+        def ws_connect(self, resume: Any = None) -> Any:
             nonlocal attempts
             attempts += 1
 

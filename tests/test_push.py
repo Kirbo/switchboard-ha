@@ -119,6 +119,8 @@ class PushClient(FakeClient):
         self.reads = {"state": 0, "connections": 0, "afk": 0}
         self.rest_error: Exception | None = None
         self.coord: SwitchboardCoordinator | None = None
+        # The resume position each attempt asked for (None = a plain connect).
+        self.resumes: list[Any] = []
 
     async def fetch_state(self) -> dict[str, Any]:
         self.reads["state"] += 1
@@ -134,7 +136,8 @@ class PushClient(FakeClient):
         self.reads["afk"] += 1
         return await super().fetch_afk()
 
-    def ws_connect(self) -> Any:
+    def ws_connect(self, resume: Any = None) -> Any:
+        self.resumes.append(resume)
         step = self.script[self.attempts]
         self.attempts += 1
         if self.attempts >= len(self.script):
@@ -167,6 +170,7 @@ def _make(
         waits.append((delay, coord.last_update_success, coord.data.obs[CID]["current_scene"]))
 
     coord._backoff_sleep = _record
+    coord._jitter = lambda: 0.5  # the jitter's midpoint: every wait is exactly its ladder step
     return coord, client, entry, waits
 
 
@@ -313,6 +317,58 @@ async def test_a_401_on_the_upgrade_starts_reauth_and_stops_retrying(
     assert len(_reauth_flows(hass, entry)) == 1, "the user is asked for a new token"
     rejected = [r for r in caplog.records if "token rejected" in r.getMessage()]
     assert len(rejected) == 1
+
+
+async def test_a_seed_that_keeps_failing_keeps_backing_off(hass: HomeAssistant) -> None:
+    """The ladder resets on a SYNCED connect, not on the bare socket open: an app that accepts the
+    socket but fails every seed read (a 500 while it starts) is not redialled once a second."""
+    coord, client, _entry, waits = _make(hass, [_Session([]) for _ in range(5)])
+    client.rest_error = coord_mod.SwitchboardApiError("GET /api/connections -> HTTP 500")
+    await coord._ws_loop()
+    await hass.async_block_till_done()
+    assert client.attempts == 5
+    assert [w[0] for w in waits] == [1, 2, 3, 5], "the ladder climbs while the seed fails"
+
+
+async def test_a_dead_socket_the_heartbeat_caught_reconnects_and_re_seeds(
+    hass: HomeAssistant,
+) -> None:
+    """A link that died without a FIN (the app's PC slept) is closed by aiohttp's heartbeat when
+    its ping goes unanswered, and surfaces as an ERROR message: that is a drop like any other —
+    entities go unavailable, the loop backs off and the next connect re-seeds."""
+    heartbeat_timeout = _Msg("", aiohttp.WSMsgType.ERROR)
+    coord, client, _entry, waits = _make(
+        hass,
+        [
+            _Session([_scene("Live"), heartbeat_timeout, _scene("never")]),
+            _Session([_scene("Back")]),
+        ],
+    )
+    await coord._ws_loop()
+    await hass.async_block_till_done()
+    assert [w[0] for w in waits] == [1]
+    assert waits[0][1] is False, "unavailable while down"
+    assert waits[0][2] == "Live", "nothing after the ERROR was applied"
+    assert coord.data.obs[CID]["current_scene"] == "Back"
+    assert client.reads["state"] == 2, "re-seeded on the reconnect"
+    assert coord.last_update_success is True
+
+
+async def test_each_wait_is_jittered_around_its_ladder_step(hass: HomeAssistant) -> None:
+    refused = aiohttp.ClientConnectionError("refused")
+    coord, _client, _entry, waits = _make(hass, [refused, refused, refused, _Session([])])
+    draws = iter([0.0, 1.0, 0.5])
+    coord._jitter = lambda: next(draws)
+    await coord._ws_loop()
+    assert [round(w[0], 6) for w in waits] == [0.8, 2.4, 3.0], "±20 % around 1, 2, 3"
+
+
+async def test_the_ladder_caps_and_never_gives_up(hass: HomeAssistant) -> None:
+    refused = aiohttp.ClientConnectionError("refused")
+    coord, client, _entry, waits = _make(hass, [refused] * 12 + [_Session([])])
+    await coord._ws_loop()
+    assert client.attempts == 13
+    assert [w[0] for w in waits] == [1, 2, 3, 5, 10, 15, 30, 45, 60, 60, 60, 60]
 
 
 async def test_a_401_on_the_resync_read_stops_retrying_too(hass: HomeAssistant) -> None:

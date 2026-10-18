@@ -5,8 +5,14 @@ after that a background task streams `/api/events/ws`, patches the snapshot in p
 `async_set_updated_data` so entities update. Every frame is also re-fired on the HA bus as
 `switchboard_event` for user automations.
 
-The snapshot is re-read on every connect and whenever the app sends a `resync` frame (its socket
-fell behind and dropped events — docs/HA.md, "resync"). Both re-reads are awaited INSIDE the
+Against an app whose frames carry `seq` / `boot_id`, a reconnect RESUMES instead (docs/HA.md,
+"Resume"): it asks for `?resume=<last seq>&boot=<boot_id>`, the app replays what was missed and
+says `resumed`, or says `gap` and the snapshot is re-read. Replayed frames apply once each (dedupe
+by seq); one older than the `late_event_max_age` option updates the entities but is not fired on
+the bus. The position lives in memory only, so a reload or an HA restart re-seeds.
+
+Otherwise the snapshot is re-read on every connect and whenever the app sends a `resync` frame (its
+socket fell behind and dropped events — docs/HA.md, "resync"). Both re-reads are awaited INSIDE the
 frame loop, so frames that arrive while the GETs are in flight wait in the socket's receive
 queue and are applied over the fresh snapshot afterwards, in arrival order: that queue is the
 buffer that keeps an older snapshot from overwriting a newer event. Never move a re-read into a
@@ -18,7 +24,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 import logging
+import random
 import time
 from typing import Any
 
@@ -32,6 +40,7 @@ from homeassistant.const import (
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import (
     SwitchboardAccessError,
@@ -40,8 +49,10 @@ from .api import (
     SwitchboardClient,
 )
 from .const import (
+    CONF_LATE_EVENT_MAX_AGE,
     CONF_MIRROR_CHAT_TEXT,
     CONF_MIRROR_MODERATION_TARGETS,
+    DEFAULT_LATE_EVENT_MAX_AGE,
     DOMAIN,
     EVENT_SWITCHBOARD,
     ISSUE_FINGERPRINT_MISMATCH,
@@ -52,9 +63,18 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Reconnect backoff ladder (seconds): never stops retrying, capped at 60s. Reset to step 0 on a
-# successful connect. Matches the Switchboard app's own app→HA ladder.
+# Reconnect backoff ladder (seconds): never stops retrying, capped at 60s. Reset to step 0 once a
+# connect is fully synced (re-seeded or resumed) — not on the bare socket open, or an app that
+# accepts the socket but fails every seed read would be redialled once a second forever. Matches
+# the Switchboard app's own app→HA ladder. Each wait is spread ±20 % (`RECONNECT_JITTER`) so a
+# restarting app is not redialled by every client in the same instant.
 RECONNECT_LADDER = (1, 2, 3, 5, 10, 15, 30, 45, 60)
+RECONNECT_JITTER = 0.2
+
+# How long an app asked to resume (docs/HA.md "Resume") may take to answer `resumed` / `gap`. An
+# app that says neither has not honoured the resume: the socket is dropped and the next connect
+# re-seeds from /api/state instead.
+RESUME_TIMEOUT_SECS = 15.0
 
 # The goodbye frame (docs/HA.md, `goodbye`) is fire-and-forget: HA is shutting down and must never
 # wait on the app. One second caps the send even on a stalled socket.
@@ -227,6 +247,30 @@ def _is_resync(frame: Any) -> bool:
     return isinstance(frame, dict) and frame.get("type") == "resync"
 
 
+def _frame_seq(frame: dict[str, Any]) -> tuple[int, str] | None:
+    """(seq, boot_id) of an event frame from a resume-capable app (docs/HA.md "Resume"), or None
+    for an older app's frame or a control frame."""
+    seq = frame.get("seq")
+    boot = frame.get("boot_id")
+    if isinstance(seq, bool) or not isinstance(seq, int) or not isinstance(boot, str) or not boot:
+        return None
+    return seq, boot
+
+
+def _frame_epoch_secs(ts: Any) -> float | None:
+    """A frame's `ts` as epoch seconds: epoch milliseconds (any number past 1e11 — year 5138 in
+    seconds), epoch seconds, or an ISO-8601 string. None when it is none of those."""
+    if isinstance(ts, bool):
+        return None
+    if isinstance(ts, (int, float)):
+        return ts / 1000 if ts > 1e11 else float(ts)
+    if isinstance(ts, str):
+        parsed: datetime | None = dt_util.parse_datetime(ts)
+        if parsed is not None:
+            return parsed.timestamp()
+    return None
+
+
 def _spotify_view(now: dict[str, Any] | None) -> dict[str, Any] | None:
     """Trim a NowPlaying payload to the fields we expose (see `_SPOTIFY_KEYS`)."""
     if not now:
@@ -357,6 +401,18 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # The reconnect backoff's wait — `asyncio.sleep`; a test injects a recorder so the ladder
         # can be asserted without waiting it out.
         self._backoff_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+        # The [0, 1) draw that jitters each wait — `random.random`; a test pins it.
+        self._jitter: Callable[[], float] = random.random
+        # The wall clock a replayed frame's age is measured against — a test pins it.
+        self._now: Callable[[], float] = time.time
+        # The resume position (docs/HA.md "Resume"): the newest event `seq` seen and the app run
+        # (`boot_id`) it belongs to. Memory only — an entry reload or an HA restart re-seeds, which
+        # is always correct. None against an app whose frames carry no `seq` (it predates resume):
+        # every reconnect then re-seeds, exactly as before.
+        self._last_seq: int | None = None
+        self._boot_id: str | None = None
+        # This socket asked to resume and the app has answered neither `resumed` nor `gap` yet.
+        self._awaiting_resume = False
 
     async def _async_update_data(self) -> SwitchboardData:
         try:
@@ -531,6 +587,34 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
     # --- events websocket --------------------------------------------------------------------
 
+    def _resume_position(self) -> tuple[int, str] | None:
+        if self._last_seq is None or not self._boot_id:
+            return None
+        return self._last_seq, self._boot_id
+
+    def _accept_seq(self, frame: dict[str, Any]) -> bool:
+        """Track the resume position; False = a frame this client already applied (a replay that
+        overlaps what it saw before the drop) — dropped, so no sensor moves twice and no
+        automation fires twice. Frames without `seq` (an older app) always pass."""
+        stamp = _frame_seq(frame)
+        if stamp is None:
+            return True
+        seq, boot = stamp
+        if boot == self._boot_id and self._last_seq is not None and seq <= self._last_seq:
+            return False
+        # A new boot id is a restarted app: its sequence starts over, so adopt it as it comes.
+        self._last_seq, self._boot_id = seq, boot
+        return True
+
+    def _synced(self) -> None:
+        """The mirror is current again — re-seeded, or resumed. Re-arms the once-per-outage log
+        gates and retires the fingerprint issue (whatever answered with the wrong certificate is
+        gone)."""
+        self._awaiting_resume = False
+        self._access_denied_logged = False
+        self._reauth_logged = False
+        self._clear_fingerprint_mismatch()
+
     async def _ws_loop(self) -> None:
         step = 0
         while not self._closing:
@@ -540,18 +624,30 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             # an "auth throttled" line per attempt there, so the loop stops (as HA's own
             # coordinator stops refreshing on ConfigEntryAuthFailed).
             token_rejected = False
+            resume = self._resume_position()
             try:
-                async with self.client.ws_connect() as ws:
-                    _LOGGER.debug("switchboard: events websocket connected")
+                async with (
+                    self.client.ws_connect(resume=resume) as ws,
+                    # Armed only while a resume is unanswered (see RESUME_TIMEOUT_SECS).
+                    asyncio.timeout(None) as resume_deadline,
+                ):
+                    _LOGGER.debug("switchboard: events websocket connected (resume=%s)", resume)
                     self._ws = ws
-                    step = 0
-                    # On EVERY connect (first included), re-fetch the snapshot: the event stream
-                    # only carries *changes*, so anything that happened between setup's snapshot
-                    # (or a disconnect) and this socket opening was missed and our state is stale.
-                    await self._resync()
-                    self._access_denied_logged = False
-                    self._reauth_logged = False
-                    self._clear_fingerprint_mismatch()
+                    if resume is None:
+                        # No position to resume from (first connect, an older app): re-fetch the
+                        # snapshot. The event stream only carries *changes*, so anything that
+                        # happened between setup's snapshot (or a disconnect) and this socket
+                        # opening was missed and our state is stale.
+                        await self._resync()
+                        self._synced()
+                        step = 0
+                    else:
+                        # The app replays what we missed, then says `resumed` (entities come back
+                        # then) or `gap` (re-seed). Entities stay unavailable until one arrives.
+                        self._awaiting_resume = True
+                        resume_deadline.reschedule(
+                            asyncio.get_running_loop().time() + RESUME_TIMEOUT_SECS
+                        )
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
@@ -571,6 +667,28 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                                 _LOGGER.debug("switchboard: app asked for a resync")
                                 await self._resync()
                                 continue
+                            ftype = frame.get("type")
+                            if ftype == "resumed":
+                                # Every missed frame was replayed: current without a re-read.
+                                if self._awaiting_resume:
+                                    _LOGGER.debug(
+                                        "switchboard: resumed (%s replayed)", frame.get("replayed")
+                                    )
+                                    resume_deadline.reschedule(None)
+                                    self._synced()
+                                    step = 0
+                                    self.async_set_updated_data(self.data)
+                                continue
+                            if ftype == "gap":
+                                # The app could not resume (too far back, or it restarted).
+                                _LOGGER.debug("switchboard: the app could not resume — re-seeding")
+                                resume_deadline.reschedule(None)
+                                await self._resync()
+                                self._synced()
+                                step = 0
+                                continue
+                            if not self._accept_seq(frame):
+                                continue  # already applied before the drop
                             try:
                                 self._handle_frame(frame)
                             except Exception:  # one bad frame must not kill the loop
@@ -603,7 +721,15 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 # BEFORE the generic ClientError arm below, which used to swallow this at DEBUG
                 # (SB-E-033): the pinned certificate no longer matches what the host presents.
                 self._log_fingerprint_mismatch(err)
-            except (TimeoutError, aiohttp.ClientError, SwitchboardApiError) as err:
+            except TimeoutError as err:
+                if self._awaiting_resume:
+                    # The app took the resume and answered neither `resumed` nor `gap`: forget the
+                    # position, so the next connect re-seeds instead of asking again.
+                    _LOGGER.debug("switchboard: resume not answered — the next connect re-seeds")
+                    self._last_seq = self._boot_id = None
+                else:
+                    _LOGGER.debug("switchboard: events websocket timed out: %s", err)
+            except (aiohttp.ClientError, SwitchboardApiError) as err:
                 _LOGGER.debug("switchboard: events websocket dropped: %s", err)
             except Exception:  # this task must never die; entities freeze if it does
                 if self._ha_stopping:  # HA is stopping: whatever broke, it is going down anyway
@@ -612,6 +738,7 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                     _LOGGER.exception("switchboard: unexpected error in events loop")
             finally:
                 self._ws = None
+                self._awaiting_resume = False
             if self._closing:
                 break
             # Disconnected → entities go unavailable instead of freezing at stale values
@@ -622,7 +749,8 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             if token_rejected:
                 _LOGGER.debug("switchboard: token rejected — events loop stopped until reauth")
                 return
-            await self._backoff_sleep(RECONNECT_LADDER[step])
+            spread = 1 - RECONNECT_JITTER + 2 * RECONNECT_JITTER * self._jitter()
+            await self._backoff_sleep(RECONNECT_LADDER[step] * spread)
             step = min(step + 1, len(RECONNECT_LADDER) - 1)
 
     def _start_reauth(self) -> None:
@@ -716,10 +844,27 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
 
     @callback
     def _handle_frame(self, frame: dict[str, Any]) -> None:
-        # Re-fire raw frame for user automations regardless of whether it touches an entity.
-        self.hass.bus.async_fire(EVENT_SWITCHBOARD, self._bus_frame(frame))
-        if self._apply(frame):
+        # Re-fire raw frame for user automations regardless of whether it touches an entity —
+        # unless it is a replay too old to act on (see `_is_late`); the entities still take it.
+        if self._is_late(frame):
+            _LOGGER.debug("switchboard: replayed %s too late to fire on the bus", frame.get("type"))
+        else:
+            self.hass.bus.async_fire(EVENT_SWITCHBOARD, self._bus_frame(frame))
+        if self._apply(frame) and not self._awaiting_resume:
             self.async_set_updated_data(self.data)
+
+    def _is_late(self, frame: dict[str, Any]) -> bool:
+        """A REPLAYED frame (docs/HA.md "Resume": `replayed: true`, its original `ts`) older than
+        the `late_event_max_age` option. An automation reacting to it now would act minutes after
+        the fact — a light flashing for a follow that happened while the link was down — so it is
+        not fired; the entities still apply it (state is state). A replay whose age cannot be read
+        counts as late: it IS a replay, and firing it blind is the failure this guards against.
+        Live frames are never late."""
+        if frame.get("replayed") is not True:
+            return False
+        max_age = self.entry.options.get(CONF_LATE_EVENT_MAX_AGE, DEFAULT_LATE_EVENT_MAX_AGE)
+        at = _frame_epoch_secs(frame.get("ts"))
+        return at is None or self._now() - at > max_age
 
     def _bus_frame(self, frame: dict[str, Any]) -> dict[str, Any]:
         """What actually goes on the HA bus for one frame.
