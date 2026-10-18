@@ -26,8 +26,12 @@ ENTRY_DATA = {
 }
 
 
-async def _setup(hass: HomeAssistant, state: dict | None = None) -> MockConfigEntry:
-    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA, title="Switchboard (test)")
+async def _setup(
+    hass: HomeAssistant, state: dict | None = None, options: dict | None = None
+) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN, data=ENTRY_DATA, options=options or {}, title="Switchboard (test)"
+    )
     entry.add_to_hass(hass)
     client = FakeClient(
         state=API_STATE if state is None else state, connections=list(CONNECTIONS), afk=API_AFK

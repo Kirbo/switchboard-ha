@@ -25,6 +25,15 @@ CONF_MIRROR_CHAT_TEXT = "mirror_chat_text"
 # log file. The frame still arrives (action/outcome intact) so automations can react to it.
 CONF_MIRROR_MODERATION_TARGETS = "mirror_moderation_targets"
 
+# Whether Home Assistant users who are NOT administrators may call the switchboard.* services.
+# Off by default (SB-00231): every service runs with the Switchboard API token this entry holds —
+# usually the GLOBAL one, which reaches every action, including `ha_service_call` back into Home
+# Assistant with the (often admin) HA token stored in Switchboard. A household member's account or
+# a wall tablet must not inherit that by default. Calls with no user (automations, the
+# system — a script started by a user carries that user) stay allowed either way, like Home
+# Assistant's own admin services.
+CONF_ALLOW_NON_ADMIN_SERVICES = "allow_non_admin_services"
+
 # Repairs issue keys (strings.json `issues`), suffixed with the entry id per instance.
 ISSUE_FINGERPRINT_MISMATCH = "fingerprint_mismatch"
 

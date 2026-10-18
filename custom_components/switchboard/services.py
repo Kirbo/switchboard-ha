@@ -19,6 +19,14 @@ Targets accept a friendly connection label or a raw id;
 anything that doesn't resolve to a known connection is passed through unchanged (so action
 sentinels like `spotify`, or ids from a not-yet-refreshed list, still work — the backend
 validates and 400s if truly wrong).
+
+Every service is **admin-only** by default (SB-00231): each one runs with the Switchboard API
+token the entry holds — usually the global one, which reaches every action, `ha_service_call` back
+into Home Assistant included. `_authorize` mirrors Home Assistant's own admin services
+(`async_register_admin_service`): a call with no user (an automation, the system) runs,
+an unknown user raises `UnknownUser`, a non-admin user raises `Unauthorized` — unless the
+`allow_non_admin_services` option is on for every instance the call can reach (see
+`_non_admin_allowed`). It is checked per call, so toggling the option needs no reload.
 """
 
 from __future__ import annotations
@@ -27,12 +35,12 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, Unauthorized, UnknownUser
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
 
 from .api import SwitchboardApiError, SwitchboardRateLimitError
-from .const import DOMAIN
+from .const import CONF_ALLOW_NON_ADMIN_SERVICES, DOMAIN
 
 SERVICE_RUN_ACTION = "run_action"
 SERVICE_OBS_SCENE_SET = "obs_scene_set"
@@ -220,6 +228,61 @@ _FLASH_KEYS = (
     ATTR_OFF_MS,
     ATTR_TRANSITION_MS,
 )
+
+
+def _non_admin_allowed(hass: HomeAssistant, entry_id: str) -> bool:
+    """Whether a NON-admin caller may use the services for this call (SB-00231).
+
+    Services are domain-wide but the option is per entry, so resolve the instances the call can
+    reach: a named `entry_id` reaches only that entry; without one, the target may resolve on ANY
+    loaded instance (`_pick`), so EVERY one of them must allow it. Fail closed: nothing loaded or
+    an unknown entry id is a no (an admin then gets `_pick`'s own error).
+    """
+    domain_data = hass.data.get(DOMAIN, {})
+    if entry_id:
+        coord = domain_data.get(entry_id)
+        coords = [coord] if coord is not None else []
+    else:
+        coords = list(domain_data.values())
+    return bool(coords) and all(
+        c.entry.options.get(CONF_ALLOW_NON_ADMIN_SERVICES, False) for c in coords
+    )
+
+
+async def _authorize(hass: HomeAssistant, call: ServiceCall) -> None:
+    """The ONE permission check every switchboard.* service runs first (SB-00231).
+
+    Same semantics as Home Assistant's `_async_admin_handler`: no user on the context (automations,
+    the system; a script started by a user carries that user) → allowed; an unknown user →
+    `UnknownUser`; an admin → allowed; any other user → `Unauthorized` unless
+    `_non_admin_allowed`.
+    """
+    user_id = call.context.user_id
+    if not user_id:
+        return
+    user = await hass.auth.async_get_user(user_id)
+    if user is None:
+        raise UnknownUser(context=call.context)
+    if user.is_admin:
+        return
+    if not _non_admin_allowed(hass, call.data.get(ATTR_ENTRY_ID, "")):
+        raise Unauthorized(context=call.context)
+
+
+def _register(
+    hass: HomeAssistant,
+    service: str,
+    handler: Callable[[ServiceCall], Awaitable[None]],
+    schema: vol.Schema,
+) -> None:
+    """Register a switchboard.* service behind `_authorize` — the only way services are added, so
+    a new one cannot skip the admin check."""
+
+    async def guarded(call: ServiceCall) -> None:
+        await _authorize(hass, call)
+        await handler(call)
+
+    hass.services.async_register(DOMAIN, service, guarded, schema=schema)
 
 
 def _pick(hass: HomeAssistant, target: str, entry_id: str = "") -> tuple[Any, str]:
@@ -468,47 +531,27 @@ def async_register_services(hass: HomeAssistant) -> None:
         return handle_alert_control
 
     for service, action_type in ALERT_CONTROLS.items():
-        hass.services.async_register(
-            DOMAIN, service, make_alert_handler(action_type), schema=ALERT_CONTROL_SCHEMA
-        )
+        _register(hass, service, make_alert_handler(action_type), ALERT_CONTROL_SCHEMA)
 
-    hass.services.async_register(
-        DOMAIN, SERVICE_RUN_ACTION, handle_run_action, schema=RUN_ACTION_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_OBS_SCENE_SET, handle_obs_scene_set, schema=OBS_SCENE_SET_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN,
+    _register(hass, SERVICE_RUN_ACTION, handle_run_action, RUN_ACTION_SCHEMA)
+    _register(hass, SERVICE_OBS_SCENE_SET, handle_obs_scene_set, OBS_SCENE_SET_SCHEMA)
+    _register(
+        hass,
         SERVICE_APPLY_SCENE_STREAM_INFO,
         handle_apply_scene_stream_info,
-        schema=APPLY_SCENE_STREAM_INFO_SCHEMA,
+        APPLY_SCENE_STREAM_INFO_SCHEMA,
     )
-    hass.services.async_register(DOMAIN, SERVICE_GO_LIVE, handle_go_live, schema=GO_LIVE_SCHEMA)
-    hass.services.async_register(
-        DOMAIN, SERVICE_OVERLAY_ALERT, handle_overlay_alert, schema=OVERLAY_ALERT_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_SET_MACHINE_STATE, handle_set_machine_state, schema=SET_MACHINE_STATE_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_SET_VARIABLE, handle_set_variable, schema=SET_VARIABLE_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_ADD_TO_VARIABLE, handle_add_to_variable, schema=ADD_TO_VARIABLE_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_LIGHT_FLASH, handle_light_flash, schema=LIGHT_FLASH_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_AFK_SNOOZE, handle_afk_snooze, schema=AFK_SNOOZE_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_AFK_RESET_IDLE, handle_afk_reset_idle, schema=AFK_RESET_IDLE_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN,
+    _register(hass, SERVICE_GO_LIVE, handle_go_live, GO_LIVE_SCHEMA)
+    _register(hass, SERVICE_OVERLAY_ALERT, handle_overlay_alert, OVERLAY_ALERT_SCHEMA)
+    _register(hass, SERVICE_SET_MACHINE_STATE, handle_set_machine_state, SET_MACHINE_STATE_SCHEMA)
+    _register(hass, SERVICE_SET_VARIABLE, handle_set_variable, SET_VARIABLE_SCHEMA)
+    _register(hass, SERVICE_ADD_TO_VARIABLE, handle_add_to_variable, ADD_TO_VARIABLE_SCHEMA)
+    _register(hass, SERVICE_LIGHT_FLASH, handle_light_flash, LIGHT_FLASH_SCHEMA)
+    _register(hass, SERVICE_AFK_SNOOZE, handle_afk_snooze, AFK_SNOOZE_SCHEMA)
+    _register(hass, SERVICE_AFK_RESET_IDLE, handle_afk_reset_idle, AFK_RESET_IDLE_SCHEMA)
+    _register(
+        hass,
         SERVICE_SET_INPUT_OVERLAY_VISIBLE,
         handle_set_input_overlay_visible,
-        schema=SET_INPUT_OVERLAY_VISIBLE_SCHEMA,
+        SET_INPUT_OVERLAY_VISIBLE_SCHEMA,
     )

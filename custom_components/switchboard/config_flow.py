@@ -27,6 +27,7 @@ from .api import (
     SwitchboardClient,
 )
 from .const import (
+    CONF_ALLOW_NON_ADMIN_SERVICES,
     CONF_FINGERPRINT,
     CONF_MIRROR_CHAT_TEXT,
     CONF_MIRROR_MODERATION_TARGETS,
@@ -55,11 +56,13 @@ STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_TOKEN): _TOKEN_SELECTOR})
 
 # Options. `mirror_chat_text` defaults OFF (SB-D-022): with it off, `twitch_chat_message` reaches
 # the HA bus with `author`/`text` nulled so the recorder never archives chat lines; the event still
-# fires so chat can be counted. See `coordinator._bus_frame`.
+# fires so chat can be counted. See `coordinator._bus_frame`. `allow_non_admin_services` defaults
+# OFF (SB-00231): the switchboard.* services are admin-only unless it is on — see `services.py`.
 STEP_OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_MIRROR_CHAT_TEXT, default=False): bool,
         vol.Required(CONF_MIRROR_MODERATION_TARGETS, default=False): bool,
+        vol.Required(CONF_ALLOW_NON_ADMIN_SERVICES, default=False): bool,
     }
 )
 

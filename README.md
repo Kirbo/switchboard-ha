@@ -207,6 +207,7 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 |---|---|---|
 | **Mirror chat text onto the event bus** | off | With it off, `twitch_chat_message` still reaches the HA bus for every chat line — so chat can be counted — but with `author` and `text` set to `null`. Turn it on to receive the names and the words (they still need the `read_events_sensitive` scope and the app's `full` chat-detail setting). |
 | **Mirror moderated viewers onto the event bus** | off | With it off, `twitch_moderation` still reaches the HA bus with the action and outcome, but with `target_login`, `target_user_id`, `reason` and `error` set to `null`. Turn it on to receive who was moderated (still needs the `read_events_sensitive` scope). |
+| **Allow non-admin Home Assistant users to call Switchboard services** | off | With it off, only Home Assistant **administrators** can call the `switchboard.*` services; a non-admin user gets *Unauthorized*. Automations and other calls with no user behind them always run. See the security note below. |
 
 > **Why off by default.** Home Assistant's recorder stores every custom event that isn't excluded
 > (`events` / `event_data`, kept for `purge_keep_days`, 10 by default). Re-firing chat verbatim would
@@ -222,6 +223,22 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 >     event_types:
 >       - switchboard_event
 > ```
+
+> **Who can call the services.** Every `switchboard.*` service runs with this entry's Switchboard
+> API token — normally the global one, which can run **any** Switchboard action, including
+> `ha_service_call` back into Home Assistant with the Home Assistant token Switchboard holds. So the
+> services are **admin-only by default**, the same rule Home Assistant applies to its own admin
+> services: a call with no user (an automation, the system) runs, an admin's call runs, and any other
+> user's call — a household member's account, a wall tablet — is refused with *Unauthorized*. A
+> script inherits the user who started it. Turn on **Allow non-admin Home Assistant users to call
+> Switchboard services** only if every user on this Home Assistant should be able to run Switchboard
+> actions. The option is read on every call (no reload). With several Switchboard instances, a call
+> that names an `entry_id` needs the option on that instance; a call that doesn't can reach any of
+> them, so it needs the option on **every** instance. In Switchboard, create its Home Assistant
+> long-lived token on a dedicated **non-admin** Home Assistant user, so `ha_service_call` cannot reach
+> Home Assistant's admin-only services either (the app then misses Home Assistant's own
+> `homeassistant_stop` signal, which only admins may subscribe to; this integration's goodbye frame
+> still tells it a restart is coming).
 
 > **Token kind.** Paste the **global** External API token (Settings → External API). The per-plugin
 > token from Switchboard's pairing Grant flow also authenticates, but it is scope-limited: the
