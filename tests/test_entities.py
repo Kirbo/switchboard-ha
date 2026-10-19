@@ -307,3 +307,50 @@ async def test_connection_status_sensor_rolls_the_rows_up(hass: HomeAssistant) -
     assert state.attributes["by_integration"]["obs"] == "reconnecting"
     assert [r["key"] for r in state.attributes["rows"]][0] == "obs/connection/o1"
     assert state.attributes["rows"][0]["last_error"] == "connect timed out"
+
+
+async def test_an_uncounted_row_is_listed_but_never_raises_the_sensor(hass: HomeAssistant) -> None:
+    """A row the app marks `counted: false` (a peer whose "Counts toward Ready to stream and
+    attention" is off, app 2026-10-19+): in `rows`, never in the state, `problems` or
+    `by_integration`; counted again, it is a problem like any other."""
+    entry = await _setup(hass)
+    coord = hass.data[DOMAIN][entry.entry_id]
+
+    def vm(counted: bool) -> dict:
+        return {
+            "type": "connection_status_changed",
+            "entry": {
+                "key": "peer/link/vm",
+                "integration": "peer",
+                "component": "link",
+                "connection_id": None,
+                "subject": "vm",
+                "label": "SB-WIN11",
+                "state": "down",
+                "since_ms": 1760800000000,
+                "last_error": "unreachable — connection refused",
+                "last_error_ms": 1760800000000,
+                "drops": 0,
+                "reconnects": 0,
+                "crashes": 0,
+                "queued": None,
+                "counted": counted,
+            },
+        }
+
+    coord._handle_frame(vm(False))
+    await hass.async_block_till_done()
+    state = hass.states.get(STATUS)
+    assert state.state == "connected"
+    assert state.attributes["problems"] == 0
+    assert state.attributes["by_integration"]["peer"] == "disabled"
+    vm_row = next(r for r in state.attributes["rows"] if r["key"] == "peer/link/vm")
+    assert vm_row["counted"] is False
+    assert vm_row["state"] == "down"
+
+    coord._handle_frame(vm(True))
+    await hass.async_block_till_done()
+    state = hass.states.get(STATUS)
+    assert state.state == "down"
+    assert state.attributes["problems"] == 1
+    assert state.attributes["by_integration"]["peer"] == "down"

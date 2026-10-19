@@ -248,8 +248,10 @@ class ConnectionStatusSensor(SwitchboardHubEntity, SensorEntity):
     `disabled` when everything reporting is switched off); unknown against an older app.
     Attributes: `problems` (how many rows are worse than connected), `by_integration` (each
     integration's worst state) and `rows` (every row: integration, component, the connection id /
-    subject / label naming it, its state, the session's drops / reconnects / crashes and the last
-    error — one short, redacted line).
+    subject / label naming it, its state, the session's drops / reconnects / crashes, the last
+    error — one short, redacted line — and `counted`). A row the app marks `counted: false` (a
+    peer whose "Counts toward Ready to stream and attention" is off) is listed but never counts
+    toward the state, `problems` or `by_integration` (app 2026-10-19+).
     """
 
     _attr_name = "Connection status"
@@ -277,7 +279,8 @@ class ConnectionStatusSensor(SwitchboardHubEntity, SensorEntity):
             "problems": sum(
                 1
                 for r in rows.values()
-                if STATUS_SEVERITY[r["state"]] > STATUS_SEVERITY["connected"]
+                if r.get("counted", True)
+                and STATUS_SEVERITY[r["state"]] > STATUS_SEVERITY["connected"]
             ),
             "by_integration": {name: worst_status(group) for name, group in sorted(by.items())},
             "rows": [rows[k] for k in sorted(rows)],

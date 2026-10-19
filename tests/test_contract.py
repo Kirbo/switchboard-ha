@@ -461,6 +461,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
             "reconnects": 1,
             "crashes": 0,
             "queued": None,
+            "counted": True,
         },
     },
     {"type": "connection_status_removed", "key": "twitch/chat/somechannel"},
@@ -594,6 +595,7 @@ API_STATE: dict[str, Any] = {
             "reconnects": 0,
             "crashes": 0,
             "queued": None,
+            "counted": True,
         }
     ],
     "version": "2026.6.10",
@@ -719,6 +721,14 @@ def test_api_state_seeds_the_connection_status_rows_by_key() -> None:
     older = {k: v for k, v in API_STATE.items() if k != "connection_status"}
     assert _state_from_snapshot(older).connection_status is None
     assert _state_from_snapshot({**API_STATE, "connection_status": []}).connection_status == {}
+    # `counted` (2026-10-19, additive): kept as sent; a row without it (an older app) counts.
+    assert row["counted"] is True
+    bare = {k: v for k, v in API_STATE["connection_status"][0].items() if k != "counted"}
+    uncounted = {**bare, "key": "peer/link/vm", "counted": False}
+    rows = _state_from_snapshot({**API_STATE, "connection_status": [bare, uncounted]})
+    assert rows.connection_status is not None
+    assert rows.connection_status[f"twitch/eventsub/{CID}"]["counted"] is True
+    assert rows.connection_status["peer/link/vm"]["counted"] is False
 
 
 def test_connection_status_frames_carry_the_rows_fields() -> None:

@@ -274,6 +274,9 @@ def _status_row(raw: Any) -> dict[str, Any] | None:
         "drops": count("drops"),
         "reconnects": count("reconnects"),
         "crashes": count("crashes"),
+        # app 2026-10-19+, additive: `false` = the user took the row out of "needs attention" (a
+        # peer that is normally off); absent (an older app) = counted.
+        "counted": raw.get("counted") is not False,
     }
 
 
@@ -287,9 +290,13 @@ def _status_from_snapshot(raw: Any) -> dict[str, dict[str, Any]] | None:
 
 
 def worst_status(rows: dict[str, dict[str, Any]]) -> str | None:
-    """The worst state among the rows (docs/HA.md ranking); `None` for no rows."""
-    states = [r["state"] for r in rows.values()]
-    return max(states, key=lambda s: STATUS_SEVERITY.get(s, 4)) if states else None
+    """The worst state among the COUNTED rows (docs/HA.md ranking); `disabled` when rows exist but
+    none counts (an uncounted row never makes anything look worse — the app's rule); `None` for
+    no rows."""
+    if not rows:
+        return None
+    states = [r["state"] for r in rows.values() if r.get("counted", True)]
+    return max(states, key=lambda s: STATUS_SEVERITY.get(s, 4)) if states else "disabled"
 
 
 def _alerts_from_snapshot(raw: Any) -> dict[str, dict[str, Any]]:

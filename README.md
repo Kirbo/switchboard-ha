@@ -49,7 +49,10 @@ entities, and lets HA drive Switchboard actions through services.
   off; unknown against an older app), live from the app's push. Attributes: `problems` (how many
   need attention), `by_integration` (each integration's worst state, e.g. `obs: reconnecting`) and
   `rows` (every row with its state, the session's `drops` / `reconnects` / `crashes` and the last
-  error) — e.g. notify when `state` becomes `down` or `crashed`.
+  error, and `counted`) — e.g. notify when `state` becomes `down` or `crashed`. A row the app marks
+  not counted (a peer whose "Counts toward Ready to stream and attention" is off, like a test VM
+  that is normally powered off; Switchboard 2026-10-19 or newer) is listed in `rows` but never
+  raises the state, `problems` or `by_integration`.
 
 Alert-preset entities sit on the Switchboard service device and follow the app live: a preset
 created in Switchboard gets its two entities on its first queue change, a deleted one has them
