@@ -67,7 +67,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "friendly_name": "Studio Door",
     },
     {"type": "machine_state_changed", "state": "afk", "source": "External API"},
-    {"type": "variable_changed", "name": "deaths", "value": "5"},
+    {"type": "variable_changed", "name": "deaths", "value": "5", "deleted": False},
     {"type": "overlay_countdown", "ends_at_ms": 1700000000000, "label": "Starting soon"},
     {
         "type": "input_overlay_visibility",

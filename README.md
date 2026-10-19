@@ -103,7 +103,7 @@ presets simply gets none.
   negative subtracts) and starts a missing variable at 0, so an HA automation can keep a tally
   without any setup in Switchboard. Every variable's current value is on the coordinator data as
   `variables` (from `/api/state`) and each change arrives as a `switchboard_event` of type
-  `variable_changed`.
+  `variable_changed` — a deleted variable is one with `deleted: true`, and leaves `variables`.
 - `switchboard.set_machine_state` — set Switchboard's machine state (`afk` / `active`), e.g. from an
   HA presence automation; fires Switchboard's `machine_state_*` triggers so it runs its own AFK
   automations (and flips back to active on input).

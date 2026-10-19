@@ -1119,10 +1119,14 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             return data.connection_status.pop(key, None) is not None
 
         if etype == "variable_changed":
-            # One user variable set/incremented; the full map was seeded from /api/state.
+            # One user variable set/incremented — or deleted (`deleted: true`, 2026-10-19; absent
+            # from older apps = false), which drops the name; the full map was seeded from
+            # /api/state.
             name = frame.get("name")
             if not isinstance(name, str) or not name:
                 return False
+            if frame.get("deleted") is True:
+                return data.variables.pop(name, None) is not None
             value = frame.get("value")
             data.variables[name] = "" if value is None else str(value)
             return True

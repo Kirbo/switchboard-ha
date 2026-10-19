@@ -419,6 +419,23 @@ async def test_variable_changed_patches_the_variables_map(hass: HomeAssistant) -
     assert not coord._apply({"type": "variable_changed", "value": "9"})
 
 
+async def test_a_deleted_variable_leaves_the_variables_map(hass: HomeAssistant) -> None:
+    coord = make_coordinator(hass)
+    assert coord._apply(
+        {"type": "variable_changed", "name": "deaths", "value": "", "deleted": True}
+    )
+    assert coord.data.variables == {"mode": "gaming"}
+    # Deleting a name the mirror does not hold changes nothing.
+    assert not coord._apply(
+        {"type": "variable_changed", "name": "deaths", "value": "", "deleted": True}
+    )
+    # `deleted: false` (and an absent flag) is an ordinary set — even to "".
+    assert coord._apply(
+        {"type": "variable_changed", "name": "deaths", "value": "", "deleted": False}
+    )
+    assert coord.data.variables == {"deaths": "", "mode": "gaming"}
+
+
 async def test_app_detect_keeps_the_two_flags_separate(hass: HomeAssistant) -> None:
     coord = make_coordinator(hass)
     assert coord._apply(
