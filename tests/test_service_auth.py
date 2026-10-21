@@ -39,6 +39,9 @@ SERVICE_DATA: dict[str, dict] = {
     "alert_pause": {},
     "alert_resume": {},
     "alert_replay": {},
+    "discord_voice": {"action": "toggle_mute"},
+    "set_volume": {"target": "system_output", "mode": "up"},
+    "spotify_skip": {"direction": "next"},
 }
 
 

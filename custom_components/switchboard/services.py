@@ -5,7 +5,10 @@ docs/HA.md) plus typed conveniences for the actions worth a proper UI: `obs_scen
 `twitch_go_live`, `overlay_alert_show`, `machine_state_set`, `ha_light_flash`, `afk_snooze`,
 `input_overlay_show`/`_hide`/`_toggle`,
 `afk_reset_idle`, and the alert-preset queue controls `alert_skip` / `alert_pause` /
-`alert_resume` / `alert_replay` (`overlay_alert_skip` / … — app 2026-10-15).
+`alert_resume` / `alert_replay` (`overlay_alert_skip` / … — app 2026-10-15), and the app
+2026-10-21 machine controls: `discord_voice` (the local Discord client's mute / deafen / input
+mode → `discord_voice_*`), `set_volume` (an OBS input's fader → `obs_audio_volume_*`, or the
+machine's output → `machine_audio_volume_*`) and `spotify_skip` (`spotify_next` / `_previous`).
 `ha_light_flash` (like `ha_service_call` and `discord_webhook_send`) requires the **global**
 External API token — a scope-limited plugin token cannot call it.
 
@@ -39,7 +42,7 @@ from homeassistant.exceptions import HomeAssistantError, Unauthorized, UnknownUs
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
 
-from .api import SwitchboardApiError, SwitchboardRateLimitError
+from .api import SwitchboardAccessError, SwitchboardApiError, SwitchboardRateLimitError
 from .const import CONF_ALLOW_NON_ADMIN_SERVICES, DOMAIN
 
 SERVICE_RUN_ACTION = "run_action"
@@ -65,6 +68,33 @@ ALERT_CONTROLS = {
     SERVICE_ALERT_RESUME: "overlay_alert_resume",
     SERVICE_ALERT_REPLAY: "overlay_alert_replay",
 }
+SERVICE_DISCORD_VOICE = "discord_voice"
+SERVICE_SET_VOLUME = "set_volume"
+SERVICE_SPOTIFY_SKIP = "spotify_skip"
+
+# `discord_voice` service action → the contract's action id (docs/HA.md Commands, app 2026-10-21).
+DISCORD_VOICE_ACTIONS = {
+    "mute": "discord_voice_mute",
+    "unmute": "discord_voice_unmute",
+    "toggle_mute": "discord_voice_mute_toggle",
+    "deafen": "discord_voice_deafen",
+    "undeafen": "discord_voice_undeafen",
+    "toggle_deafen": "discord_voice_deafen_toggle",
+    "set_mode": "discord_voice_mode_set",
+    "toggle_mode": "discord_voice_mode_toggle",
+}
+DISCORD_VOICE_MODES = ["voice_activity", "push_to_talk"]
+
+# `set_volume`: what it moves, how, and in which unit (docs/HA.md Commands, app 2026-10-21).
+VOLUME_OBS_INPUT = "obs_input"
+VOLUME_SYSTEM_OUTPUT = "system_output"
+VOLUME_TARGETS = [VOLUME_OBS_INPUT, VOLUME_SYSTEM_OUTPUT]
+VOLUME_MODES = ["set", "up", "down"]
+UNIT_DB = "db"
+UNIT_PERCENT = "percent"
+VOLUME_UNITS = [UNIT_DB, UNIT_PERCENT]
+
+SPOTIFY_SKIP = {"next": "spotify_next", "previous": "spotify_previous"}
 
 ATTR_ACTION_TYPE = "action_type"
 ATTR_TARGET = "target"
@@ -93,6 +123,13 @@ ATTR_DISCORD_ROUTE = "discord_route"
 ATTR_TWITCH_ACCOUNT = "twitch_account"
 ATTR_MULTI_LIVE = "multi_live"
 ATTR_PRESET = "preset"
+ATTR_ACTION = "action"
+ATTR_MODE = "mode"
+ATTR_INPUT = "input"
+ATTR_CONNECTION = "connection"
+ATTR_DEVICE = "device"
+ATTR_UNIT = "unit"
+ATTR_DIRECTION = "direction"
 
 # docs/HA.md Commands: the Auto Twitch account — the account the trigger came from, else the one
 # that is live on the machine running the action (an /api command has no trigger, so: the live
@@ -218,6 +255,105 @@ ALERT_CONTROL_SCHEMA = vol.Schema(
     {vol.Optional(ATTR_PRESET, default=""): cv.string, **_ENTRY_FIELD}
 )
 
+
+def _discord_mode_rule(data: dict[str, Any]) -> dict[str, Any]:
+    """`mode` belongs to `set_mode` alone: required there, refused anywhere else (a `mode` on a
+    toggle would read as if it chose the toggle's result, which it cannot)."""
+    if data[ATTR_ACTION] == "set_mode" and not data.get(ATTR_MODE):
+        raise vol.Invalid("`mode` is required when `action` is set_mode", path=[ATTR_MODE])
+    if data[ATTR_ACTION] != "set_mode" and data.get(ATTR_MODE):
+        raise vol.Invalid("`mode` only applies to `action: set_mode`", path=[ATTR_MODE])
+    return data
+
+
+# `discord_voice` acts on the Switchboard MACHINE's own Discord client — no connection. The
+# optional `target_peer_id` runs it on a paired peer's client instead (docs/HA.md Commands:
+# "Machine audio and Discord voice act on a machine, not a connection"), as `run_action` does.
+DISCORD_VOICE_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Required(ATTR_ACTION): vol.In(list(DISCORD_VOICE_ACTIONS)),
+            vol.Optional(ATTR_MODE): vol.In(DISCORD_VOICE_MODES),
+            vol.Optional(ATTR_TARGET_PEER_ID, default=""): cv.string,
+            **_ENTRY_FIELD,
+        }
+    ),
+    _discord_mode_rule,
+)
+
+
+def _volume_rule(data: dict[str, Any]) -> dict[str, Any]:
+    """The cross-field rules of `set_volume` — each one a call the app would refuse or quietly
+    read another way, so it fails here with the reason instead of as an opaque HTTP 400."""
+    target, mode = data[ATTR_TARGET], data[ATTR_MODE]
+    amount, unit = data.get(ATTR_AMOUNT), data.get(ATTR_UNIT)
+    if target == VOLUME_OBS_INPUT:
+        if not data.get(ATTR_INPUT, "").strip():
+            raise vol.Invalid(
+                "`input` (the OBS mixer name) is required for obs_input", [ATTR_INPUT]
+            )
+        if data.get(ATTR_DEVICE):
+            raise vol.Invalid("`device` only applies to system_output", [ATTR_DEVICE])
+    else:
+        # The OS output only speaks percent; an OBS input name or connection here is a mix-up.
+        if unit == UNIT_DB:
+            raise vol.Invalid("system_output is set in percent, not dB", [ATTR_UNIT])
+        for key in (ATTR_INPUT, ATTR_CONNECTION):
+            if data.get(key):
+                raise vol.Invalid(f"`{key}` only applies to obs_input", [key])
+    if mode == "set" and amount is None:
+        raise vol.Invalid("`amount` is required when `mode` is set", [ATTR_AMOUNT])
+    if mode != "set" and amount is not None and amount <= 0:
+        # The direction is the mode's job; a negative step would make `up` go down.
+        raise vol.Invalid("the step `amount` must be positive — use mode up or down", [ATTR_AMOUNT])
+    if amount is not None and (unit == UNIT_PERCENT or target == VOLUME_SYSTEM_OUTPUT):
+        if not 0 <= amount <= 100:
+            raise vol.Invalid("a percent `amount` must be between 0 and 100", [ATTR_AMOUNT])
+    return data
+
+
+SET_VOLUME_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Required(ATTR_TARGET): vol.In(VOLUME_TARGETS),
+            vol.Optional(ATTR_INPUT, default=""): cv.string,
+            vol.Optional(ATTR_CONNECTION, default=""): cv.string,
+            vol.Optional(ATTR_DEVICE, default=""): cv.string,
+            vol.Optional(ATTR_MODE, default="set"): vol.In(VOLUME_MODES),
+            # dB range = OBS's own fader (-100..26); percent is checked in `_volume_rule`.
+            vol.Optional(ATTR_AMOUNT): vol.All(vol.Coerce(float), vol.Range(min=-100, max=100)),
+            vol.Optional(ATTR_UNIT): vol.In(VOLUME_UNITS),
+            vol.Optional(ATTR_TARGET_PEER_ID, default=""): cv.string,
+            **_ENTRY_FIELD,
+        }
+    ),
+    _volume_rule,
+)
+
+SPOTIFY_SKIP_SCHEMA = vol.Schema(
+    {vol.Required(ATTR_DIRECTION): vol.In(list(SPOTIFY_SKIP)), **_ENTRY_FIELD}
+)
+
+
+def _num(amount: float) -> str:
+    """A number as the app's value grammar reads it: `6`, not `6.0`; `2.5` stays."""
+    return f"{amount:g}"
+
+
+def volume_value(target: str, amount: float | None, unit: str | None) -> str:
+    """The command `value` for `set_volume` (docs/HA.md Commands, app 2026-10-21).
+
+    OBS: `-6dB` / `50%` (a bare number would also read as dB, but the suffix says it plainly);
+    the OS output: a bare percent (`50`). No amount (an up/down step) = empty, so the app's own
+    default step applies (3 dB on OBS, 5 % on the output).
+    """
+    if amount is None:
+        return ""
+    if target == VOLUME_SYSTEM_OUTPUT:
+        return _num(amount)
+    return f"{_num(amount)}%" if unit == UNIT_PERCENT else f"{_num(amount)}dB"
+
+
 # ha_flash keys forwarded verbatim when supplied (the app defaults anything omitted).
 _FLASH_KEYS = (
     ATTR_FLASHES,
@@ -273,7 +409,7 @@ def _register(
     hass: HomeAssistant,
     service: str,
     handler: Callable[[ServiceCall], Awaitable[None]],
-    schema: vol.Schema,
+    schema: vol.Schema | vol.All,
 ) -> None:
     """Register a switchboard.* service behind `_authorize` — the only way services are added, so
     a new one cannot skip the admin check."""
@@ -333,6 +469,32 @@ async def _send(coord: Any, payload: dict[str, Any]) -> None:
         raise HomeAssistantError(f"Switchboard rejected the command: {result}")
 
 
+async def _send_explained(
+    coord: Any, payload: dict[str, Any], on_400: str, on_403: str | None = None
+) -> None:
+    """`_send`, with a plain-language reason for the app's refusals of a typed service.
+
+    A `400` from the app (an older build answering an unknown action type, or the action's own
+    precondition — an unknown preset, Discord not running) and, when `on_403` is given, a `403` (a
+    plugin token missing the action's scope) surface as what to check instead of a bare "HTTP
+    400". Everything else is `_send`'s error unchanged.
+    """
+    try:
+        await _send(coord, payload)
+    except HomeAssistantError as err:
+        cause = err.__cause__
+        action_type = payload["action_type"]
+        if on_403 is not None and isinstance(cause, SwitchboardAccessError):
+            raise HomeAssistantError(
+                f"Switchboard refused {action_type}: {cause}. {on_403}"
+            ) from cause
+        if isinstance(cause, SwitchboardApiError) and "HTTP 400" in str(cause):
+            raise HomeAssistantError(
+                f"Switchboard refused {action_type}: {cause}. {on_400}"
+            ) from cause
+        raise
+
+
 async def _send_alert_control(coord: Any, action_type: str, preset: str) -> None:
     """One alert-preset queue control. The preset rides `action_params.alert_preset` (the app
     resolves an id or a case-insensitive name); blank = every preset, so nothing is sent for it.
@@ -344,16 +506,31 @@ async def _send_alert_control(coord: Any, action_type: str, preset: str) -> None
     payload: dict[str, Any] = {"action_type": action_type, "value": ""}
     if preset:
         payload["action_params"] = {"alert_preset": preset}
-    try:
-        await _send(coord, payload)
-    except HomeAssistantError as err:
-        if isinstance(err.__cause__, SwitchboardApiError) and "HTTP 400" in str(err.__cause__):
-            raise HomeAssistantError(
-                f"Switchboard refused {action_type}: {err.__cause__}. Check the alert preset's "
-                "name or id — or update Switchboard: alert-preset controls need the app from "
-                "2026-10-15 or newer."
-            ) from err.__cause__
-        raise
+    await _send_explained(
+        coord,
+        payload,
+        "Check the alert preset's name or id — or update Switchboard: alert-preset controls need "
+        "the app from 2026-10-15 or newer.",
+    )
+
+
+# The 2026-10-21 machine controls' refusals, said plainly (docs/HA.md Commands).
+_NEEDS_2026_10_21 = "or update Switchboard: this needs the app from 2026-10-21 or newer."
+DISCORD_400 = (
+    "Is the Discord desktop app running on that machine, with Switchboard's Discord voice "
+    f"controls connected (the Voice card on its Discord view)? — {_NEEDS_2026_10_21}"
+)
+DISCORD_403 = (
+    "The token needs the `discord_voice` scope: a plugin token paired before 2026-10-21 lacks "
+    "it — tick it on the plugin's card in Switchboard, or use the global External API token."
+)
+VOLUME_400 = (
+    "Check the OBS input name and connection, or that the output device has a software volume "
+    f"(HDMI / DisplayPort outputs often have none) — {_NEEDS_2026_10_21}"
+)
+SPOTIFY_400 = (
+    "Is Spotify connected in Switchboard (or playing on that machine)? — " + _NEEDS_2026_10_21
+)
 
 
 def async_register_services(hass: HomeAssistant) -> None:
@@ -530,6 +707,65 @@ def async_register_services(hass: HomeAssistant) -> None:
 
         return handle_alert_control
 
+    async def handle_discord_voice(call: ServiceCall) -> None:
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+        # No connection: the machine's own Discord client (docs/HA.md — send the target blank).
+        payload: dict[str, Any] = {
+            "action_type": DISCORD_VOICE_ACTIONS[call.data[ATTR_ACTION]],
+            "target_connection_id": "",
+            "value": call.data.get(ATTR_MODE, ""),
+        }
+        if peer_id := call.data[ATTR_TARGET_PEER_ID].strip():
+            payload["target_peer_id"] = peer_id
+        await _send_explained(coord, payload, DISCORD_400, DISCORD_403)
+
+    async def handle_set_volume(call: ServiceCall) -> None:
+        target, mode = call.data[ATTR_TARGET], call.data[ATTR_MODE]
+        peer_id = call.data[ATTR_TARGET_PEER_ID].strip()
+        value = volume_value(target, call.data.get(ATTR_AMOUNT), call.data.get(ATTR_UNIT))
+        payload: dict[str, Any]
+        if target == VOLUME_OBS_INPUT:
+            connection = call.data[ATTR_CONNECTION].strip()
+            if peer_id:
+                # A peer's OBS is named by ITS id — never swap in a same-named local one.
+                coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+                conn_id = connection
+            else:
+                # Blank = the app's default OBS (docs/HA.md: blank target = default connection).
+                coord, conn_id = _pick(hass, connection, call.data[ATTR_ENTRY_ID])
+            payload = {
+                "action_type": f"obs_audio_volume_{mode}",
+                "target_connection_id": conn_id,
+                "value": value,
+                "action_params": {"input": call.data[ATTR_INPUT].strip()},
+            }
+        else:
+            coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+            payload = {
+                "action_type": f"machine_audio_volume_{mode}",
+                "target_connection_id": "",
+                "value": value,
+            }
+            if device := call.data[ATTR_DEVICE].strip():
+                # Absent = the default output; an id names a device on the machine that runs it.
+                payload["action_params"] = {"audio_device": device}
+        if peer_id:
+            payload["target_peer_id"] = peer_id
+        await _send_explained(coord, payload, VOLUME_400)
+
+    async def handle_spotify_skip(call: ServiceCall) -> None:
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+        await _send_explained(
+            coord,
+            {
+                "action_type": SPOTIFY_SKIP[call.data[ATTR_DIRECTION]],
+                # The contract's Spotify sentinel (docs/HA.md Commands, the spotify_* rows).
+                "target_connection_id": "spotify",
+                "value": "",
+            },
+            SPOTIFY_400,
+        )
+
     for service, action_type in ALERT_CONTROLS.items():
         _register(hass, service, make_alert_handler(action_type), ALERT_CONTROL_SCHEMA)
 
@@ -555,3 +791,6 @@ def async_register_services(hass: HomeAssistant) -> None:
         handle_set_input_overlay_visible,
         SET_INPUT_OVERLAY_VISIBLE_SCHEMA,
     )
+    _register(hass, SERVICE_DISCORD_VOICE, handle_discord_voice, DISCORD_VOICE_SCHEMA)
+    _register(hass, SERVICE_SET_VOLUME, handle_set_volume, SET_VOLUME_SCHEMA)
+    _register(hass, SERVICE_SPOTIFY_SKIP, handle_spotify_skip, SPOTIFY_SKIP_SCHEMA)

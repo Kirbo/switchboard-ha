@@ -377,6 +377,84 @@
           "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
       }
+    },
+    "discord_voice": {
+      "name": "Discord voice",
+      "description": "Mute, deafen or switch the input mode of the Discord desktop app on the Switchboard machine, as its own buttons do. Needs Switchboard 2026-10-21 or newer with its Discord voice controls connected.",
+      "fields": {
+        "action": {
+          "name": "Action",
+          "description": "mute / unmute / toggle_mute (the microphone), deafen / undeafen / toggle_deafen (the headset), set_mode (pick the input mode below) or toggle_mode (flip between voice activity and push-to-talk). Already in that state = nothing happens."
+        },
+        "mode": {
+          "name": "Input mode",
+          "description": "For set_mode only: voice_activity or push_to_talk (push-to-talk uses the key bound in Discord's own settings)."
+        },
+        "target_peer_id": {
+          "name": "Peer machine",
+          "description": "Optional id of a paired peer machine (Switchboard /api/peers) to run this on over the encrypted mesh — that machine's own Discord client. The peer must have granted this Switchboard the actions scope. Leave blank for this Switchboard's machine."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
+    "set_volume": {
+      "name": "Set volume",
+      "description": "Set or step a volume: an OBS input's mixer fader, or the Switchboard machine's system output. Needs Switchboard 2026-10-21 or newer.",
+      "fields": {
+        "target": {
+          "name": "What",
+          "description": "obs_input = an OBS audio input's fader; system_output = the machine's output volume (the operating system's)."
+        },
+        "input": {
+          "name": "OBS input",
+          "description": "For obs_input (required there): the input's name as OBS's Audio Mixer shows it, e.g. Mic/Aux."
+        },
+        "connection": {
+          "name": "OBS connection",
+          "description": "For obs_input: the OBS connection label or id. Leave blank for Switchboard's default OBS."
+        },
+        "device": {
+          "name": "Output device",
+          "description": "For system_output: the operating system's output device id (a PulseAudio/PipeWire sink name on Linux, the endpoint id on Windows, the device UID on macOS). Leave blank for the default output — the usual choice."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "set = go to the amount; up / down = move by the amount (blank amount = Switchboard's default step: 3 dB on OBS, 5 % on the system output)."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "The level (set) or the step (up / down; positive). OBS in dB: -100 to 26, 0 dB = full. Percent: 0 to 100."
+        },
+        "unit": {
+          "name": "Unit",
+          "description": "obs_input only: db (default — the scale OBS's mixer shows) or percent (along OBS's slider: 100 % = 0 dB). The system output is always percent."
+        },
+        "target_peer_id": {
+          "name": "Peer machine",
+          "description": "Optional id of a paired peer machine (Switchboard /api/peers) to run this on over the encrypted mesh — that machine's own OBS connection or output device; the OBS connection is then an id on that peer. The peer must have granted this Switchboard the actions scope. Leave blank for this Switchboard's machine."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
+    },
+    "spotify_skip": {
+      "name": "Spotify skip",
+      "description": "Skip to the next Spotify track or go back to the previous one. Needs Switchboard 2026-10-21 or newer.",
+      "fields": {
+        "direction": {
+          "name": "Direction",
+          "description": "next or previous."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
     }
   }
 }

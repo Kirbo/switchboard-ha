@@ -64,9 +64,9 @@ The four Discord entities sit on the Switchboard service device (one Discord cli
 Switchboard machine) and are **unavailable** whenever Switchboard has no live session with Discord
 — Discord not running, the voice controls not set up or needing a sign-in, or an older Switchboard
 — rather than showing a guessed "not muted". They come back by themselves when Discord starts.
-Drive Discord from Home Assistant with `switchboard.run_action` (`discord_voice_mute_toggle`,
-`discord_voice_deafen`, `discord_voice_mode_set` with `value: push_to_talk`, …), and the system
-output volume with the `machine_audio_*` actions (Switchboard's `docs/HA.md` lists them).
+Drive Discord from Home Assistant with `switchboard.discord_voice`, and volumes with
+`switchboard.set_volume` (see **Services** below); automate on Discord with the events or the
+sensors (see **Discord voice automations** below).
 
 Alert-preset entities sit on the Switchboard service device and follow the app live: a preset
 created in Switchboard gets its two entities on its first queue change, a deleted one has them
@@ -132,6 +132,49 @@ presets simply gets none.
 - `switchboard.light_flash` — blink a light or light group N times in a colour through
   *Switchboard's own* downstream Home Assistant connection, then restore its previous state.
   Like every `ha_*` action this needs the **global** External API token, not a paired-plugin one.
+- `switchboard.discord_voice` — the Discord desktop app on the Switchboard machine, as its own
+  buttons: `action` is `mute` / `unmute` / `toggle_mute` (microphone), `deafen` / `undeafen` /
+  `toggle_deafen` (headset), `set_mode` (with `mode: voice_activity` or `push_to_talk` — required
+  there, refused on the other actions) or `toggle_mode`. Already in that state = nothing happens.
+  Needs Switchboard 2026-10-21 or newer with its Discord voice controls connected (the Voice card on
+  its Discord view) — when Discord is not running the call fails saying so. A paired-plugin token
+  also needs the `discord_voice` scope (a plugin paired before 2026-10-21 lacks it: tick it on the
+  plugin's card; the global token always has it). An optional `target_peer_id` drives a paired peer
+  machine's Discord instead.
+- `switchboard.set_volume` — set or step a volume (Switchboard 2026-10-21 or newer). `target:
+  obs_input` moves an OBS audio input's fader: `input` is its Audio Mixer name (required),
+  `connection` the OBS label or id (blank = Switchboard's default OBS); `amount` in `unit: db`
+  (default — `-100` to `26`, `0` = full) or `percent` of OBS's slider (`0`–`100`, 100 % = 0 dB).
+  `target: system_output` sets the machine's output volume in percent (`0`–`100`); `device`
+  optionally names an output device id (blank = the default output — the usual choice). `mode` is
+  `set` (default; `amount` required), `up` or `down` (`amount` = the positive step; blank = the
+  app's default step, 3 dB on OBS, 5 % on the output). An optional `target_peer_id` runs it on a
+  paired peer (the `connection` is then that peer's OBS connection id). Maps to
+  `obs_audio_volume_set/up/down` (value `-6dB` / `50%`) and `machine_audio_volume_set/up/down`.
+- `switchboard.spotify_skip` — `direction: next` or `previous` skips the Spotify track
+  (`spotify_next` / `spotify_previous`; Switchboard 2026-10-21 or newer).
+
+```yaml
+action:
+  - service: switchboard.discord_voice
+    data:
+      action: set_mode
+      mode: push_to_talk
+  - service: switchboard.set_volume
+    data:
+      target: obs_input
+      input: Mic/Aux
+      mode: down
+      amount: 3
+      unit: db
+  - service: switchboard.set_volume
+    data:
+      target: system_output
+      amount: 40
+  - service: switchboard.spotify_skip
+    data:
+      direction: next
+```
 
 `target` accepts a friendly connection **label** or its **id** (anything that isn't a known
 connection — e.g. the `spotify` sentinel — is passed through unchanged). Every service also takes an
@@ -171,6 +214,77 @@ automation:
         data:
           text: "Incoming raid!"
 ```
+
+### Discord voice automations
+
+Switchboard reports the local Discord client's voice state two ways (Switchboard 2026-10-21 or
+newer, with its Discord voice controls connected):
+
+- **Events** — `switchboard_event` with `type: discord_voice_channel_changed` (joined, switched or
+  left a voice channel or call: `channel_id` — `null` after leaving — `call_kind` = `server` / `dm` /
+  `group_dm`, `guild_id`, the `previous_channel_*` left, and the `channel_name` / `guild_name`
+  names only with the `read_events_sensitive` scope, which the global token holds) and
+  `type: discord_voice_settings_changed` (`mute`, `deaf`, `input_mode` plus their `previous_*`
+  values). The app's first reading after Discord or Switchboard (re)starts is a baseline and fires
+  neither event.
+
+```yaml
+automation:
+  - alias: On-air light while in a Discord call
+    trigger:
+      - platform: event
+        event_type: switchboard_event
+        event_data:
+          type: discord_voice_channel_changed
+    action:
+      - service: "light.turn_{{ 'on' if trigger.event.data.channel_id else 'off' }}"
+        target:
+          entity_id: light.on_air
+  - alias: Tell me when Discord mutes me
+    trigger:
+      - platform: event
+        event_type: switchboard_event
+        event_data:
+          type: discord_voice_settings_changed
+          mute: true
+          previous_mute: false
+    action:
+      - service: notify.notify
+        data:
+          message: Discord microphone muted
+```
+
+- **Sensors as state triggers** — `Discord muted`, `Discord deafened`, `In Discord voice` and
+  `Discord input mode` follow the same events, so a plain state trigger works too. The entity ids
+  follow the Switchboard device's name (`Switchboard (<host>)` by default) — pick yours from the
+  device page; `switchboard` below stands for that prefix:
+
+```yaml
+automation:
+  - alias: Dim the desk while in voice
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.switchboard_in_discord_voice
+        to: "on"
+    action:
+      - service: light.turn_on
+        target:
+          entity_id: light.desk
+        data:
+          brightness_pct: 30
+  - alias: Push-to-talk reminder
+    trigger:
+      - platform: state
+        entity_id: sensor.switchboard_discord_input_mode
+        to: push_to_talk
+    action:
+      - service: notify.notify
+        data:
+          message: Discord is on push-to-talk
+```
+
+They read **unavailable** while Switchboard has no live Discord session, so a `to: "off"` trigger
+does not fire when Discord simply quits — add a `to: unavailable` trigger if that matters.
 
 ## Requirements
 

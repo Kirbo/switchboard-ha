@@ -7,7 +7,11 @@ from homeassistant.exceptions import HomeAssistantError
 import pytest
 import voluptuous as vol
 
-from custom_components.switchboard.api import SwitchboardApiError, SwitchboardRateLimitError
+from custom_components.switchboard.api import (
+    SwitchboardAccessError,
+    SwitchboardApiError,
+    SwitchboardRateLimitError,
+)
 from custom_components.switchboard.const import DOMAIN
 
 from .test_entities import _setup
@@ -404,3 +408,268 @@ async def test_an_alert_control_the_app_refuses_says_why(hass: HomeAssistant) ->
     )
     with pytest.raises(HomeAssistantError, match="2026-10-15"):
         await _call(hass, "alert_pause", {"preset": "Nope"})
+
+
+@pytest.mark.parametrize(
+    ("action", "action_type"),
+    [
+        ("mute", "discord_voice_mute"),
+        ("unmute", "discord_voice_unmute"),
+        ("toggle_mute", "discord_voice_mute_toggle"),
+        ("deafen", "discord_voice_deafen"),
+        ("undeafen", "discord_voice_undeafen"),
+        ("toggle_deafen", "discord_voice_deafen_toggle"),
+        ("toggle_mode", "discord_voice_mode_toggle"),
+    ],
+)
+async def test_discord_voice_maps_each_action_with_a_blank_target(
+    hass: HomeAssistant, action: str, action_type: str
+) -> None:
+    """docs/HA.md Commands: `discord_voice_*` act on the machine's own Discord client — the target
+    is sent blank (a blank target never resolves to a Discord webhook) and the value empty."""
+    entry = await _setup(hass)
+    await _call(hass, "discord_voice", {"action": action})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": action_type,
+        "target_connection_id": "",
+        "value": "",
+    }
+
+
+async def test_discord_voice_set_mode_sends_the_mode_as_the_value(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    await _call(hass, "discord_voice", {"action": "set_mode", "mode": "push_to_talk"})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "discord_voice_mode_set",
+        "target_connection_id": "",
+        "value": "push_to_talk",
+    }
+
+
+async def test_discord_voice_runs_on_a_peer_machine(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    await _call(hass, "discord_voice", {"action": "deafen", "target_peer_id": " peer-1 "})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "discord_voice_deafen",
+        "target_connection_id": "",
+        "value": "",
+        "target_peer_id": "peer-1",
+    }
+
+
+async def test_discord_voice_validates_the_mode(hass: HomeAssistant) -> None:
+    """`mode` is required by set_mode, refused on every other action, and only the two modes the
+    contract names are accepted — nothing reaches the app for any of these."""
+    entry = await _setup(hass)
+    with pytest.raises(vol.Invalid, match="required"):
+        await _call(hass, "discord_voice", {"action": "set_mode"})
+    with pytest.raises(vol.Invalid, match="only applies"):
+        await _call(hass, "discord_voice", {"action": "toggle_mute", "mode": "push_to_talk"})
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "discord_voice", {"action": "set_mode", "mode": "always_on"})
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "discord_voice", {"action": "shout"})
+    assert _client(hass, entry.entry_id).commands == []
+
+
+async def test_discord_voice_says_why_the_app_refused(hass: HomeAssistant) -> None:
+    """A 400 (Discord not running / not signed in, or an app older than 2026-10-21) and a 403 (a
+    plugin token without the `discord_voice` scope) each name what to check."""
+    entry = await _setup(hass)
+    client = _client(hass, entry.entry_id)
+    client.error = SwitchboardApiError("command failed: HTTP 400 discord is not running")
+    with pytest.raises(HomeAssistantError, match="Discord desktop app running"):
+        await _call(hass, "discord_voice", {"action": "mute"})
+    client.error = SwitchboardAccessError("denied by the External API ACL")
+    with pytest.raises(HomeAssistantError, match="discord_voice` scope"):
+        await _call(hass, "discord_voice", {"action": "mute"})
+    # Anything else keeps the plain error.
+    client.error = SwitchboardApiError("command failed: HTTP 500 boom")
+    with pytest.raises(HomeAssistantError, match="command failed: HTTP 500") as err:
+        await _call(hass, "discord_voice", {"action": "mute"})
+    assert "Discord desktop app" not in str(err.value)
+
+
+async def test_discord_voice_rejected_result_raises(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    _client(hass, entry.entry_id).result = {"ok": False}
+    with pytest.raises(HomeAssistantError, match="rejected"):
+        await _call(hass, "discord_voice", {"action": "toggle_deafen"})
+
+
+@pytest.mark.parametrize(
+    ("data", "action_type", "value"),
+    [
+        ({"mode": "set", "amount": -6}, "obs_audio_volume_set", "-6dB"),
+        ({"amount": -6.5, "unit": "db"}, "obs_audio_volume_set", "-6.5dB"),
+        ({"mode": "set", "amount": 50, "unit": "percent"}, "obs_audio_volume_set", "50%"),
+        ({"mode": "up", "amount": 3}, "obs_audio_volume_up", "3dB"),
+        ({"mode": "down", "amount": 5, "unit": "percent"}, "obs_audio_volume_down", "5%"),
+        # No step = the app's own default (3 dB).
+        ({"mode": "up"}, "obs_audio_volume_up", ""),
+    ],
+)
+async def test_set_volume_on_an_obs_input(
+    hass: HomeAssistant, data: dict, action_type: str, value: str
+) -> None:
+    """docs/HA.md Commands: the fader level/step in dB (suffixed) or % of OBS's slider; the input
+    name rides `action_params.input`; the OBS connection resolves label → id."""
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "set_volume",
+        {"target": "obs_input", "input": "Mic/Aux", "connection": "Home OBS", **data},
+    )
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": action_type,
+        "target_connection_id": OBS_CONN,
+        "value": value,
+        "action_params": {"input": "Mic/Aux"},
+    }
+
+
+async def test_set_volume_blank_obs_connection_is_the_app_default(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    await _call(hass, "set_volume", {"target": "obs_input", "input": "Mic/Aux", "amount": 0})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "obs_audio_volume_set",
+        "target_connection_id": "",
+        "value": "0dB",
+        "action_params": {"input": "Mic/Aux"},
+    }
+
+
+async def test_set_volume_on_a_peer_keeps_its_obs_connection_verbatim(
+    hass: HomeAssistant,
+) -> None:
+    """A peer's OBS is named by the PEER's id — a label matching a local OBS must not be swapped."""
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "set_volume",
+        {
+            "target": "obs_input",
+            "input": "Mic/Aux",
+            "connection": "Home OBS",
+            "mode": "down",
+            "target_peer_id": "peer-1",
+        },
+    )
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "obs_audio_volume_down",
+        "target_connection_id": "Home OBS",
+        "value": "",
+        "action_params": {"input": "Mic/Aux"},
+        "target_peer_id": "peer-1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("data", "action_type", "value"),
+    [
+        ({"amount": 50}, "machine_audio_volume_set", "50"),
+        ({"amount": 50, "unit": "percent"}, "machine_audio_volume_set", "50"),
+        ({"mode": "up", "amount": 10}, "machine_audio_volume_up", "10"),
+        # No step = the app's own default (5 %).
+        ({"mode": "down"}, "machine_audio_volume_down", ""),
+    ],
+)
+async def test_set_volume_on_the_system_output(
+    hass: HomeAssistant, data: dict, action_type: str, value: str
+) -> None:
+    """The OS output: a bare percent, no connection (blank target), the default output unless a
+    device id is given."""
+    entry = await _setup(hass)
+    await _call(hass, "set_volume", {"target": "system_output", **data})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": action_type,
+        "target_connection_id": "",
+        "value": value,
+    }
+
+
+async def test_set_volume_names_the_output_device_and_peer(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "set_volume",
+        {
+            "target": "system_output",
+            "amount": 30,
+            "device": "alsa_output.usb",
+            "target_peer_id": "peer-1",
+        },
+    )
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "machine_audio_volume_set",
+        "target_connection_id": "",
+        "value": "30",
+        "action_params": {"audio_device": "alsa_output.usb"},
+        "target_peer_id": "peer-1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("data", "match"),
+    [
+        ({"target": "obs_input", "amount": -6}, "`input`"),
+        ({"target": "obs_input", "input": "  ", "amount": -6}, "`input`"),
+        ({"target": "obs_input", "input": "Mic", "amount": 1, "device": "x"}, "`device`"),
+        ({"target": "system_output", "amount": 50, "unit": "db"}, "percent, not dB"),
+        ({"target": "system_output", "amount": 50, "input": "Mic"}, "`input`"),
+        ({"target": "system_output", "amount": 50, "connection": "Home OBS"}, "`connection`"),
+        ({"target": "system_output"}, "`amount` is required"),
+        ({"target": "obs_input", "input": "Mic", "mode": "up", "amount": -3}, "positive"),
+        ({"target": "obs_input", "input": "Mic", "amount": -5, "unit": "percent"}, "0 and 100"),
+        ({"target": "system_output", "amount": -5}, "0 and 100"),
+        ({"target": "obs_input", "input": "Mic", "amount": 500}, None),
+        ({"target": "speakers", "amount": 5}, None),
+        ({"target": "obs_input", "input": "Mic", "mode": "max"}, None),
+    ],
+)
+async def test_set_volume_refuses_a_call_the_app_would_misread(
+    hass: HomeAssistant, data: dict, match: str | None
+) -> None:
+    entry = await _setup(hass)
+    with pytest.raises(vol.Invalid, match=match):
+        await _call(hass, "set_volume", data)
+    assert _client(hass, entry.entry_id).commands == []
+
+
+async def test_set_volume_says_why_the_app_refused(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    _client(hass, entry.entry_id).error = SwitchboardApiError(
+        "command failed: HTTP 400 this output has no volume control"
+    )
+    with pytest.raises(HomeAssistantError, match="no volume control.*2026-10-21"):
+        await _call(hass, "set_volume", {"target": "system_output", "amount": 40})
+
+
+@pytest.mark.parametrize(
+    ("direction", "action_type"),
+    [("next", "spotify_next"), ("previous", "spotify_previous")],
+)
+async def test_spotify_skip_sends_the_spotify_sentinel(
+    hass: HomeAssistant, direction: str, action_type: str
+) -> None:
+    entry = await _setup(hass)
+    await _call(hass, "spotify_skip", {"direction": direction})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": action_type,
+        "target_connection_id": "spotify",
+        "value": "",
+    }
+
+
+async def test_spotify_skip_validates_and_explains(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "spotify_skip", {"direction": "sideways"})
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "spotify_skip", {})
+    assert _client(hass, entry.entry_id).commands == []
+    _client(hass, entry.entry_id).error = SwitchboardApiError(
+        "command failed: HTTP 400 unknown action_type"
+    )
+    with pytest.raises(HomeAssistantError, match="2026-10-21"):
+        await _call(hass, "spotify_skip", {"direction": "next"})

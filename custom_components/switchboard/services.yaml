@@ -338,3 +338,116 @@ alert_replay:
       selector:
         config_entry:
           integration: switchboard
+
+discord_voice:
+  fields:
+    action:
+      required: true
+      example: toggle_mute
+      selector:
+        select:
+          options:
+            - mute
+            - unmute
+            - toggle_mute
+            - deafen
+            - undeafen
+            - toggle_deafen
+            - set_mode
+            - toggle_mode
+    mode:
+      required: false
+      example: push_to_talk
+      selector:
+        select:
+          options:
+            - voice_activity
+            - push_to_talk
+    target_peer_id:
+      required: false
+      example: 5f0c2b1e-8a4d-4c1e-9b7a-2d3e4f5a6b7c
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
+
+set_volume:
+  fields:
+    target:
+      required: true
+      example: obs_input
+      selector:
+        select:
+          options:
+            - obs_input
+            - system_output
+    input:
+      required: false
+      example: Mic/Aux
+      selector:
+        text:
+    connection:
+      required: false
+      example: Home OBS
+      selector:
+        text:
+    device:
+      required: false
+      example: alsa_output.usb-headset.analog-stereo
+      selector:
+        text:
+    mode:
+      required: false
+      default: set
+      selector:
+        select:
+          options:
+            - set
+            - up
+            - down
+    amount:
+      required: false
+      example: -6
+      selector:
+        number:
+          min: -100
+          max: 100
+          step: 0.5
+          mode: box
+    unit:
+      required: false
+      example: db
+      selector:
+        select:
+          options:
+            - db
+            - percent
+    target_peer_id:
+      required: false
+      example: 5f0c2b1e-8a4d-4c1e-9b7a-2d3e4f5a6b7c
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
+
+spotify_skip:
+  fields:
+    direction:
+      required: true
+      example: next
+      selector:
+        select:
+          options:
+            - next
+            - previous
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
