@@ -14,6 +14,9 @@ from .const import DOMAIN
 from .coordinator import SwitchboardCoordinator
 
 TO_REDACT = {CONF_TOKEN}
+# Which Discord voice channel the streamer sits in, and on which server, says who they are with
+# (docs/HA.md "Two read scopes") — a diagnostics file is pasted into public bug reports.
+DATA_TO_REDACT = {"channel_name", "guild_name"}
 
 
 async def async_get_config_entry_diagnostics(
@@ -24,6 +27,6 @@ async def async_get_config_entry_diagnostics(
     return {
         "entry": async_redact_data(dict(entry.data), TO_REDACT),
         "connections": coordinator.connections,
-        "data": asdict(coordinator.data),
+        "data": async_redact_data(asdict(coordinator.data), DATA_TO_REDACT),
         "last_update_success": coordinator.last_update_success,
     }

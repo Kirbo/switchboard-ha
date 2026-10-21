@@ -29,7 +29,12 @@ entities, and lets HA drive Switchboard actions through services.
   not "offline": the app has stopped retrying and nothing reconnects until someone replaces the
   credential in Switchboard. Attributes name the affected `connections` and `integrations`);
   per **alert preset** (Switchboard 2026-10-15 or newer): `<preset> paused` — the preset's alert
-  queue is held by hand (`switchboard.alert_pause`, a deck key, a rule or the app's editor).
+  queue is held by hand (`switchboard.alert_pause`, a deck key, a rule or the app's editor);
+  **Discord voice** (Switchboard 2026-10-21 or newer, with its Discord voice controls connected):
+  `Discord muted`, `Discord deafened` and `In Discord voice` — the Discord desktop app on
+  Switchboard's machine (attributes while in voice: `call_kind` — `server` / `dm` / `group_dm` —
+  and `channel_id`, plus the `channel` and `guild` names only when the token holds Switchboard's
+  `read_events_sensitive` scope; the global token does).
 - **Sensors** — per OBS connection: current `Scene` (attribute: that instance's `scenes` list),
   `Stream started` (timestamp — derive uptime from it; an automatic restart the app runs keeps
   it) and `Stream delay` (seconds, `0` = off);
@@ -39,7 +44,8 @@ entities, and lets HA drive Switchboard actions through services.
   (`playing`/`paused`/`stopped`) with now-playing attributes (title, artist, featuring, album,
   playlist, playlist URL, art URL, up-next track, duration), `Focused app` (attributes: the
   `running` watch-list ids plus the separate `watched_focused` / `watched_running` flags), and
-  `Version` (with any pending-update attributes); per **alert preset**: `<preset> queued` — how
+  `Version` (with any pending-update attributes), `Discord input mode` (`voice_activity` /
+  `push_to_talk`; Switchboard 2026-10-21 or newer); per **alert preset**: `<preset> queued` — how
   many alerts are waiting (attributes: `showing` = the alert kind on screen right now, e.g.
   `twitch_follow`, `null` = nothing; `dropped` = alerts thrown away since the app started;
   `merged` = alerts folded into a storm summary since the app started; `paused`; `preset_id`);
@@ -53,6 +59,14 @@ entities, and lets HA drive Switchboard actions through services.
   not counted (a peer whose "Counts toward Ready to stream and attention" is off, like a test VM
   that is normally powered off; Switchboard 2026-10-19 or newer) is listed in `rows` but never
   raises the state, `problems` or `by_integration`.
+
+The four Discord entities sit on the Switchboard service device (one Discord client per
+Switchboard machine) and are **unavailable** whenever Switchboard has no live session with Discord
+— Discord not running, the voice controls not set up or needing a sign-in, or an older Switchboard
+— rather than showing a guessed "not muted". They come back by themselves when Discord starts.
+Drive Discord from Home Assistant with `switchboard.run_action` (`discord_voice_mute_toggle`,
+`discord_voice_deafen`, `discord_voice_mode_set` with `value: push_to_talk`, …), and the system
+output volume with the `machine_audio_*` actions (Switchboard's `docs/HA.md` lists them).
 
 Alert-preset entities sit on the Switchboard service device and follow the app live: a preset
 created in Switchboard gets its two entities on its first queue change, a deleted one has them

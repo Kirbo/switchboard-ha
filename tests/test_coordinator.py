@@ -710,3 +710,139 @@ async def test_a_status_frame_creates_the_rows_against_an_older_snapshot(
         {"type": "connection_status_changed", "entry": _status_entry("x/y/z", "down")}
     )
     assert coord.data.connection_status == {"x/y/z": coord.data.connection_status["x/y/z"]}
+
+
+# --- docs/HA.md "Discord voice" (app 2026-10-21) ---------------------------------------------
+
+DISCORD_ROW = "discord/rpc/local"
+
+
+def _discord_row(state: str) -> dict[str, Any]:
+    return {"type": "connection_status_changed", "entry": _status_entry(DISCORD_ROW, state)}
+
+
+def _channel(channel_id: str | None, **fields: Any) -> dict[str, Any]:
+    return {
+        "type": "discord_voice_channel_changed",
+        "channel_id": channel_id,
+        "channel_name": None,
+        "guild_id": None,
+        "guild_name": None,
+        "call_kind": None,
+        "previous_channel_id": None,
+        "previous_channel_name": None,
+        **fields,
+    }
+
+
+def _settings(mute: bool, deaf: bool, mode: str = "voice_activity") -> dict[str, Any]:
+    return {
+        "type": "discord_voice_settings_changed",
+        "mute": mute,
+        "deaf": deaf,
+        "input_mode": mode,
+        "previous_mute": not mute,
+        "previous_deaf": deaf,
+        "previous_input_mode": mode,
+    }
+
+
+async def test_discord_channel_frames_patch_the_voice_slice(hass: HomeAssistant) -> None:
+    """Join → switch to a call → leave: each frame replaces the channel fields; a leave clears
+    every one of them, so no stale name or kind survives it."""
+    coord = make_coordinator(hass)
+    assert coord.data.discord_voice is not None
+    assert coord._apply(
+        _channel(
+            "9", channel_name="Raid planning", guild_name="Guild", call_kind="server", guild_id="1"
+        )
+    )
+    dv = coord.data.discord_voice
+    assert dv["in_voice"] is True
+    assert dv["channel_id"] == "9"
+    assert dv["channel_name"] == "Raid planning"
+    assert dv["guild_name"] == "Guild"
+    assert coord._apply(_channel("10", call_kind="dm", previous_channel_id="9"))
+    dv = coord.data.discord_voice
+    assert dv["call_kind"] == "dm"
+    assert dv["channel_name"] is None, "a call carries no name here — never the old channel's"
+    assert dv["guild_name"] is None
+    assert coord._apply(_channel(None, previous_channel_id="10"))
+    dv = coord.data.discord_voice
+    assert dv["in_voice"] is False
+    assert dv["channel_id"] is None
+    assert dv["call_kind"] is None
+    # Mute/deafen are untouched by channel moves.
+    assert dv["mute"] is False
+    assert not coord._apply(_channel(None, previous_channel_id="10")), "same state = no update"
+
+
+async def test_discord_settings_frames_patch_mute_deaf_and_mode(hass: HomeAssistant) -> None:
+    coord = make_coordinator(hass)
+    assert coord._apply(_settings(mute=True, deaf=False))
+    assert coord.data.discord_voice["mute"] is True
+    assert coord._apply(_settings(mute=True, deaf=True, mode="push_to_talk"))
+    dv = coord.data.discord_voice
+    assert dv["deaf"] is True
+    assert dv["input_mode"] == "push_to_talk"
+    # The channel is untouched by a settings change.
+    assert dv["channel_id"] == "100000000000000001"
+    assert not coord._apply(_settings(mute=True, deaf=True, mode="push_to_talk"))
+
+
+async def test_discord_frames_before_the_slice_is_seeded_change_nothing(
+    hass: HomeAssistant,
+) -> None:
+    """No live session in the snapshot (`discord_voice: null`): a frame cannot build a whole state
+    (it does not carry the other half), so it waits for the re-read the status row triggers."""
+    coord = make_coordinator(hass)
+    coord.data.discord_voice = None
+    assert not coord._apply(_settings(mute=True, deaf=False))
+    assert not coord._apply(_channel("9", call_kind="server"))
+    assert coord.data.discord_voice is None
+
+
+async def test_the_discord_row_leaving_connected_makes_the_state_unknown(
+    hass: HomeAssistant,
+) -> None:
+    coord = make_coordinator(hass)
+    assert coord._apply(_discord_row("connected"))
+    assert coord._reseed_requested, "first sight of `connected` asks for the baseline"
+    coord._reseed_requested = False
+    assert coord.data.discord_voice is not None
+    assert coord._apply(_discord_row("disabled"))  # Discord quit
+    assert coord.data.discord_voice is None
+    assert not coord._reseed_requested
+
+
+async def test_the_discord_row_turning_connected_asks_for_a_reseed_once(
+    hass: HomeAssistant,
+) -> None:
+    coord = make_coordinator(hass)
+    assert coord._apply(_discord_row("connecting"))
+    assert not coord._reseed_requested
+    assert coord._apply(_discord_row("connected"))
+    assert coord._reseed_requested
+    coord._reseed_requested = False
+    # A later change to the same, still-connected row (a counter) is no new session.
+    frame = _discord_row("connected")
+    frame["entry"]["reconnects"] = 1
+    assert coord._apply(frame)
+    assert not coord._reseed_requested
+
+
+async def test_other_rows_never_touch_the_discord_slice(hass: HomeAssistant) -> None:
+    coord = make_coordinator(hass)
+    before = dict(coord.data.discord_voice)
+    assert coord._apply(
+        {"type": "connection_status_changed", "entry": _status_entry("obs/connection/x", "down")}
+    )
+    assert coord.data.discord_voice == before
+    assert not coord._reseed_requested
+
+
+async def test_a_removed_discord_row_makes_the_state_unknown(hass: HomeAssistant) -> None:
+    coord = make_coordinator(hass)
+    assert coord._apply(_discord_row("connected"))
+    assert coord._apply({"type": "connection_status_removed", "key": DISCORD_ROW})
+    assert coord.data.discord_voice is None

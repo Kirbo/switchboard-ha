@@ -138,3 +138,61 @@ async def test_an_event_during_the_connect_read_survives_the_older_snapshot(
     coord, client, _fired = await _run(hass, [], [[_scene("Live")]])
     assert client.reads == 1
     assert coord.data.obs[CID]["current_scene"] == "Live"
+
+
+def _discord_connected() -> dict[str, Any]:
+    return {
+        "type": "connection_status_changed",
+        "entry": {
+            "key": "discord/rpc/local",
+            "integration": "discord",
+            "component": "rpc",
+            "connection_id": None,
+            "subject": "local",
+            "label": None,
+            "state": "connected",
+            "since_ms": 1760800000000,
+            "last_error": None,
+            "last_error_ms": None,
+            "drops": 0,
+            "reconnects": 0,
+            "crashes": 0,
+            "queued": None,
+            "counted": True,
+        },
+    }
+
+
+def _discord_mute(mute: bool) -> dict[str, Any]:
+    return {
+        "type": "discord_voice_settings_changed",
+        "mute": mute,
+        "deaf": False,
+        "input_mode": "voice_activity",
+        "previous_mute": not mute,
+        "previous_deaf": False,
+        "previous_input_mode": "voice_activity",
+    }
+
+
+async def test_the_discord_session_connecting_re_reads_the_state(hass: HomeAssistant) -> None:
+    """docs/HA.md "Discord voice": a reconnect's first reading is a baseline the app sends as no
+    event, so the row turning `connected` must re-read /api/state (connect + this one)."""
+    coord, client, fired = await _run(hass, [_discord_mute(True), _discord_connected()], [])
+    assert client.reads == 2, "connect + the Discord session connecting"
+    assert coord.data.discord_voice is not None
+    assert coord.data.discord_voice["mute"] is False, "the fresh snapshot is adopted"
+    assert [f["type"] for f in fired] == [
+        "discord_voice_settings_changed",
+        "connection_status_changed",
+    ]
+
+
+async def test_a_discord_frame_during_that_read_survives_the_older_snapshot(
+    hass: HomeAssistant,
+) -> None:
+    """While that re-read is out, Discord is muted: the mute wins over the older snapshot."""
+    coord, client, _fired = await _run(hass, [_discord_connected()], [[], [_discord_mute(True)]])
+    assert client.reads == 2
+    assert coord.data.discord_voice is not None
+    assert coord.data.discord_voice["mute"] is True

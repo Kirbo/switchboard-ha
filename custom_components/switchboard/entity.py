@@ -84,6 +84,28 @@ class SwitchboardTwitchEntity(SwitchboardEntity):
         return super().available and self._cid in self.coordinator.data.twitch
 
 
+class SwitchboardDiscordVoiceEntity(SwitchboardHubEntity):
+    """Entity reading the local Discord client's voice state (docs/HA.md "Discord voice", app
+    2026-10-21), on the hub device: one Discord client per Switchboard machine, so no device of
+    its own. Unavailable while the app has no live session with Discord (the feature off, Discord
+    not running, a sign-in needed) and against an app older than the slice — never a stale or
+    invented "unmuted"."""
+
+    _key: str
+
+    def __init__(self, coordinator: SwitchboardCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_discord_{self._key}"
+
+    @property
+    def _voice(self) -> dict:
+        return self.coordinator.data.discord_voice or {}
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.data.discord_voice is not None
+
+
 def alert_unique_id(entry: ConfigEntry, preset_id: str, key: str) -> str:
     """The unique id of one alert-preset entity — `<entry>_alert_<preset id>_<key>`."""
     return f"{entry.entry_id}_alert_{preset_id}_{key}"

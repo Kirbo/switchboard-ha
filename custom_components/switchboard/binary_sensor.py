@@ -1,4 +1,5 @@
-"""Binary sensors: per-OBS connected/streaming/recording/frozen + a global AFK sensor."""
+"""Binary sensors: per-OBS connected/streaming/recording/frozen, a global AFK sensor, and the
+local Discord client's muted / deafened / in-voice flags."""
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from .const import DOMAIN
 from .coordinator import SwitchboardCoordinator
 from .entity import (
     SwitchboardAlertEntity,
+    SwitchboardDiscordVoiceEntity,
     SwitchboardHubEntity,
     SwitchboardObsEntity,
     SwitchboardTwitchEntity,
@@ -45,6 +47,9 @@ async def async_setup_entry(
         SwitchboardAppActiveSensor(coordinator, entry),
         UpdateAvailableSensor(coordinator, entry),
         NeedsReauthSensor(coordinator, entry),
+        DiscordMutedSensor(coordinator, entry),
+        DiscordDeafenedSensor(coordinator, entry),
+        DiscordInVoiceSensor(coordinator, entry),
     ]
     for cid in coordinator.obs_ids():
         entities += [
@@ -77,6 +82,65 @@ class AlertPausedSensor(SwitchboardAlertEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return bool(self._row.get("paused"))
+
+
+class DiscordMutedSensor(SwitchboardDiscordVoiceEntity, BinarySensorEntity):
+    """The local Discord client's microphone mute (its own mute button) — exactly what the app
+    sends, never derived from the deafen state."""
+
+    _key = "muted"
+    _attr_name = "Discord muted"
+    _attr_icon = "mdi:microphone-off"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._voice.get("mute"))
+
+
+class DiscordDeafenedSensor(SwitchboardDiscordVoiceEntity, BinarySensorEntity):
+    """The local Discord client's deafen (its own headset button)."""
+
+    _key = "deafened"
+    _attr_name = "Discord deafened"
+    _attr_icon = "mdi:headphones-off"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._voice.get("deaf"))
+
+
+class DiscordInVoiceSensor(SwitchboardDiscordVoiceEntity, BinarySensorEntity):
+    """Whether the local Discord client sits in a voice channel or call right now.
+
+    Attributes: `call_kind` (`server` / `dm` / `group_dm`) and `channel_id`; `channel` and `guild`
+    (the names) ONLY when the app sent them — it withholds them from a token without
+    `read_events_sensitive`, since which channel the streamer is in, and on which server, says who
+    they are with. The names are never invented or carried over from an earlier channel.
+    """
+
+    _key = "in_voice"
+    _attr_name = "In Discord voice"
+    _attr_icon = "mdi:headset"
+    _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._voice.get("in_voice"))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        voice = self._voice
+        if not voice.get("in_voice"):
+            return {}
+        attrs: dict[str, object] = {
+            "call_kind": voice.get("call_kind"),
+            "channel_id": voice.get("channel_id"),
+        }
+        if voice.get("channel_name"):
+            attrs["channel"] = voice["channel_name"]
+        if voice.get("guild_name"):
+            attrs["guild"] = voice["guild_name"]
+        return attrs
 
 
 class ObsFlagSensor(SwitchboardObsEntity, BinarySensorEntity):

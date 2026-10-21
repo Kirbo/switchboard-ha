@@ -354,3 +354,137 @@ async def test_an_uncounted_row_is_listed_but_never_raises_the_sensor(hass: Home
     assert state.state == "down"
     assert state.attributes["problems"] == 1
     assert state.attributes["by_integration"]["peer"] == "down"
+
+
+DISCORD_MUTED = "binary_sensor.switchboard_test_discord_muted"
+DISCORD_DEAFENED = "binary_sensor.switchboard_test_discord_deafened"
+IN_DISCORD_VOICE = "binary_sensor.switchboard_test_in_discord_voice"
+DISCORD_MODE = "sensor.switchboard_test_discord_input_mode"
+
+
+async def test_discord_voice_entities_mirror_the_slice(hass: HomeAssistant) -> None:
+    """docs/HA.md "Discord voice": muted / deafened / in voice + the input mode, live from the
+    two push events; the channel and server names are attributes only when the app sent them."""
+    entry = await _setup(hass)
+    assert hass.states.get(DISCORD_MUTED).state == "off"
+    assert hass.states.get(DISCORD_DEAFENED).state == "off"
+    assert hass.states.get(DISCORD_MODE).state == "voice_activity"
+    voice = hass.states.get(IN_DISCORD_VOICE)
+    assert voice.state == "on"
+    assert voice.attributes["channel"] == "Stream lounge"
+    assert voice.attributes["guild"] == "Kirbo's server"
+    assert voice.attributes["call_kind"] == "server"
+
+    coord = hass.data[DOMAIN][entry.entry_id]
+    coord._handle_frame(
+        {
+            "type": "discord_voice_settings_changed",
+            "mute": True,
+            "deaf": True,
+            "input_mode": "push_to_talk",
+            "previous_mute": False,
+            "previous_deaf": False,
+            "previous_input_mode": "voice_activity",
+        }
+    )
+    # The same channel, as a consumer without read_events_sensitive receives it: names nulled.
+    coord._handle_frame(
+        {
+            "type": "discord_voice_channel_changed",
+            "channel_id": "100000000000000007",
+            "channel_name": None,
+            "guild_id": None,
+            "guild_name": None,
+            "call_kind": "group_dm",
+            "previous_channel_id": "100000000000000001",
+            "previous_channel_name": None,
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(DISCORD_MUTED).state == "on"
+    assert hass.states.get(DISCORD_DEAFENED).state == "on"
+    assert hass.states.get(DISCORD_MODE).state == "push_to_talk"
+    voice = hass.states.get(IN_DISCORD_VOICE)
+    assert voice.state == "on"
+    assert voice.attributes["call_kind"] == "group_dm"
+    assert "channel" not in voice.attributes, "no name sent → no name shown, never the old one"
+    assert "guild" not in voice.attributes
+
+    coord._handle_frame(
+        {
+            "type": "discord_voice_channel_changed",
+            "channel_id": None,
+            "channel_name": None,
+            "guild_id": None,
+            "guild_name": None,
+            "call_kind": None,
+            "previous_channel_id": "100000000000000007",
+            "previous_channel_name": None,
+        }
+    )
+    await hass.async_block_till_done()
+    voice = hass.states.get(IN_DISCORD_VOICE)
+    assert voice.state == "off"
+    assert "call_kind" not in voice.attributes
+
+
+async def test_discord_voice_entities_are_unavailable_without_a_live_session(
+    hass: HomeAssistant,
+) -> None:
+    """`discord_voice: null` (Discord not running, not set up, a sign-in needed) is unknown — the
+    entities say unavailable instead of an invented "not muted"."""
+    entry = await _setup(hass, state={**API_STATE, "discord_voice": None})
+    for entity_id in (DISCORD_MUTED, DISCORD_DEAFENED, IN_DISCORD_VOICE, DISCORD_MODE):
+        assert hass.states.get(entity_id).state == "unavailable", entity_id
+
+    # Discord quitting mid-session does the same.
+    coord = hass.data[DOMAIN][entry.entry_id]
+    coord.data.discord_voice = {**API_STATE["discord_voice"]}
+    coord.async_update_listeners()
+    await hass.async_block_till_done()
+    assert hass.states.get(DISCORD_MUTED).state == "off"
+    coord._handle_frame(
+        {
+            "type": "connection_status_changed",
+            "entry": {
+                "key": "discord/rpc/local",
+                "integration": "discord",
+                "component": "rpc",
+                "connection_id": None,
+                "subject": "local",
+                "label": None,
+                "state": "disabled",
+                "since_ms": 1760800000000,
+                "last_error": None,
+                "last_error_ms": None,
+                "drops": 1,
+                "reconnects": 0,
+                "crashes": 0,
+                "queued": None,
+                "counted": True,
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(DISCORD_MUTED).state == "unavailable"
+
+
+async def test_an_unknown_discord_input_mode_reads_unknown(hass: HomeAssistant) -> None:
+    await _setup(
+        hass,
+        state={**API_STATE, "discord_voice": {**API_STATE["discord_voice"], "input_mode": "x"}},
+    )
+    assert hass.states.get(DISCORD_MODE).state == "unknown"
+
+
+async def test_diagnostics_redact_the_discord_names(hass: HomeAssistant) -> None:
+    from custom_components.switchboard.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    entry = await _setup(hass)
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    voice = diag["data"]["discord_voice"]
+    assert voice["channel_name"] == "**REDACTED**"
+    assert voice["guild_name"] == "**REDACTED**"
+    assert voice["channel_id"] == "100000000000000001"

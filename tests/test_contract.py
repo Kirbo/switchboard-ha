@@ -465,6 +465,80 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         },
     },
     {"type": "connection_status_removed", "key": "twitch/chat/somechannel"},
+    # docs/HA.md "Connection status" → `discord/rpc/local` (2026-10-21): the local Discord
+    # client's session row (component `rpc`, no connection id).
+    {
+        "type": "connection_status_changed",
+        "entry": {
+            "key": "discord/rpc/local",
+            "integration": "discord",
+            "component": "rpc",
+            "connection_id": None,
+            "subject": "local",
+            "label": None,
+            "state": "disabled",
+            "since_ms": 1760800000000,
+            "last_error": None,
+            "last_error_ms": None,
+            "drops": 0,
+            "reconnects": 0,
+            "crashes": 0,
+            "queued": None,
+            "counted": True,
+        },
+    },
+    # docs/HA.md `discord_voice_channel_changed` / `discord_voice_settings_changed` (2026-10-21).
+    # The channel event as a `read_events_sensitive` holder sees it, as everyone else sees it
+    # (names nulled — redacted, not withheld), a call (no guild) and a leave.
+    {
+        "type": "discord_voice_channel_changed",
+        "channel_id": "100000000000000001",
+        "channel_name": "Stream lounge",
+        "guild_id": "200000000000000002",
+        "guild_name": "Kirbo's server",
+        "call_kind": "server",
+        "previous_channel_id": None,
+        "previous_channel_name": None,
+    },
+    {
+        "type": "discord_voice_channel_changed",
+        "channel_id": "100000000000000001",
+        "channel_name": None,
+        "guild_id": "200000000000000002",
+        "guild_name": None,
+        "call_kind": "server",
+        "previous_channel_id": None,
+        "previous_channel_name": None,
+    },
+    {
+        "type": "discord_voice_channel_changed",
+        "channel_id": "100000000000000003",
+        "channel_name": None,
+        "guild_id": None,
+        "guild_name": None,
+        "call_kind": "dm",
+        "previous_channel_id": "100000000000000001",
+        "previous_channel_name": "Stream lounge",
+    },
+    {
+        "type": "discord_voice_channel_changed",
+        "channel_id": None,
+        "channel_name": None,
+        "guild_id": None,
+        "guild_name": None,
+        "call_kind": None,
+        "previous_channel_id": "100000000000000003",
+        "previous_channel_name": None,
+    },
+    {
+        "type": "discord_voice_settings_changed",
+        "mute": True,
+        "deaf": False,
+        "input_mode": "voice_activity",
+        "previous_mute": False,
+        "previous_deaf": False,
+        "previous_input_mode": "voice_activity",
+    },
 ]
 
 # docs/HA.md "Event stream" → "resync" (app 2026-10-13) — verbatim. NOT an event (it concerns one
@@ -599,6 +673,18 @@ API_STATE: dict[str, Any] = {
         }
     ],
     "version": "2026.6.10",
+    # docs/HA.md "Discord voice" (2026-10-21, additive; null with no live session, absent on
+    # older apps). Names null without read_events_sensitive.
+    "discord_voice": {
+        "in_voice": True,
+        "channel_id": "100000000000000001",
+        "channel_name": "Stream lounge",
+        "guild_name": "Kirbo's server",
+        "call_kind": "server",
+        "mute": False,
+        "deaf": False,
+        "input_mode": "voice_activity",
+    },
     "update": {"version": "2026.7.1", "body": "notes", "ready": False},
 }
 
@@ -676,6 +762,16 @@ def test_api_state_maps_every_documented_field() -> None:
     # that OBS) are consumer extras this integration has no use for — the contract only requires
     # that they are tolerated. `go_live_ok` is not surfaced: the HA box never sends a stream key.
     assert "go_live_ok" not in inst
+    assert data.discord_voice == {
+        "in_voice": True,
+        "channel_id": "100000000000000001",
+        "channel_name": "Stream lounge",
+        "guild_name": "Kirbo's server",
+        "call_kind": "server",
+        "mute": False,
+        "deaf": False,
+        "input_mode": "voice_activity",
+    }
 
 
 def test_api_state_tolerates_the_obs_source_rows() -> None:
@@ -741,6 +837,71 @@ def test_connection_status_frames_carry_the_rows_fields() -> None:
             assert set(frame) == {"type", "key"}
 
 
+def test_api_state_discord_voice_is_unknown_without_a_live_session() -> None:
+    """`discord_voice` is `null` while the app has no live Discord session and absent on an app
+    older than 2026-10-21 — both read as "unknown" (the entities go unavailable), never as
+    "unmuted, not in voice"."""
+    assert _state_from_snapshot({**API_STATE, "discord_voice": None}).discord_voice is None
+    older = {k: v for k, v in API_STATE.items() if k != "discord_voice"}
+    assert _state_from_snapshot(older).discord_voice is None
+    assert _state_from_snapshot({**API_STATE, "discord_voice": "on"}).discord_voice is None
+
+
+def test_api_state_discord_voice_tolerates_withheld_names_and_no_channel() -> None:
+    """Without `read_events_sensitive` the names arrive null; out of voice every channel field is
+    null. Neither may leave a stale name behind."""
+    unscoped = {**API_STATE["discord_voice"], "channel_name": None, "guild_name": None}
+    data = _state_from_snapshot({**API_STATE, "discord_voice": unscoped})
+    assert data.discord_voice is not None
+    assert data.discord_voice["in_voice"] is True
+    assert data.discord_voice["channel_name"] is None
+    assert data.discord_voice["guild_name"] is None
+    idle = {
+        **API_STATE["discord_voice"],
+        "in_voice": False,
+        "channel_id": None,
+        "channel_name": None,
+        "guild_name": None,
+        "call_kind": None,
+        "mute": True,
+    }
+    data = _state_from_snapshot({**API_STATE, "discord_voice": idle})
+    assert data.discord_voice is not None
+    assert data.discord_voice["in_voice"] is False
+    assert data.discord_voice["call_kind"] is None
+    assert data.discord_voice["mute"] is True
+
+
+def test_discord_voice_frames_carry_the_documented_fields() -> None:
+    """The channel event's names are nullable (both forms are in the fixture), and the settings
+    event carries every current value plus its `previous_*`."""
+    channel = [f for f in DOCUMENTED_EVENTS if f["type"] == "discord_voice_channel_changed"]
+    keys = {
+        "type",
+        "channel_id",
+        "channel_name",
+        "guild_id",
+        "guild_name",
+        "call_kind",
+        "previous_channel_id",
+        "previous_channel_name",
+    }
+    assert all(set(f) == keys for f in channel)
+    assert any(f["channel_name"] is None and f["channel_id"] for f in channel)
+    assert any(isinstance(f["channel_name"], str) for f in channel)
+    assert any(f["channel_id"] is None for f in channel), "a leave"
+    settings = next(f for f in DOCUMENTED_EVENTS if f["type"] == "discord_voice_settings_changed")
+    assert set(settings) == {
+        "type",
+        "mute",
+        "deaf",
+        "input_mode",
+        "previous_mute",
+        "previous_deaf",
+        "previous_input_mode",
+    }
+
+
 def test_api_state_tolerates_an_empty_snapshot() -> None:
     """Nothing configured yet (or an older app) must not raise."""
     data = _state_from_snapshot({})
@@ -751,6 +912,7 @@ def test_api_state_tolerates_an_empty_snapshot() -> None:
     assert data.spotify_now is None
     assert data.afk is False
     assert data.alerts == {}
+    assert data.discord_voice is None
 
 
 def test_api_state_prefers_machine_state_over_the_afk_bool() -> None:

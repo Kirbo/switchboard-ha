@@ -53,6 +53,7 @@ from .const import (
     CONF_MIRROR_CHAT_TEXT,
     CONF_MIRROR_MODERATION_TARGETS,
     DEFAULT_LATE_EVENT_MAX_AGE,
+    DISCORD_RPC_STATUS_KEY,
     DOMAIN,
     EVENT_SWITCHBOARD,
     ISSUE_FINGERPRINT_MISMATCH,
@@ -155,6 +156,14 @@ class SwitchboardData:
     # the snapshot, kept live by `connection_status_changed` (a whole row, replaced by key) and
     # `connection_status_removed` (drop by key).
     connection_status: dict[str, dict[str, Any]] | None = None
+    # The local Discord client's voice state (app 2026-10-21, additive on /api/state as
+    # `discord_voice`; docs/HA.md "Discord voice"): {in_voice, channel_id, channel_name,
+    # guild_name, call_kind, mute, deaf, input_mode}. `None` = no live session (the feature is off,
+    # Discord is not running, it needs signing in again) or an older app — the Discord entities are
+    # unavailable then. Seeded from the snapshot (re-read whenever the `discord/rpc/local` status
+    # row turns `connected`), kept live by `discord_voice_channel_changed` and
+    # `discord_voice_settings_changed`.
+    discord_voice: dict[str, Any] | None = None
 
     @property
     def watched_app_active(self) -> bool:
@@ -299,6 +308,32 @@ def worst_status(rows: dict[str, dict[str, Any]]) -> str | None:
     return max(states, key=lambda s: STATUS_SEVERITY.get(s, 4)) if states else "disabled"
 
 
+def _text_or_none(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _discord_voice_view(raw: Any) -> dict[str, Any] | None:
+    """`/api/state.discord_voice` → our fields; `None` when the app has no live Discord session
+    (`null`) or predates the slice (absent). The names are `None` whenever the app withheld them
+    (a token without `read_events_sensitive`) or Discord did not give one."""
+    if not isinstance(raw, dict):
+        return None
+    channel_id = _text_or_none(raw.get("channel_id"))
+    in_voice = raw.get("in_voice") is True or (
+        raw.get("in_voice") is None and channel_id is not None
+    )
+    return {
+        "in_voice": in_voice,
+        "channel_id": channel_id if in_voice else None,
+        "channel_name": _text_or_none(raw.get("channel_name")) if in_voice else None,
+        "guild_name": _text_or_none(raw.get("guild_name")) if in_voice else None,
+        "call_kind": _text_or_none(raw.get("call_kind")) if in_voice else None,
+        "mute": raw.get("mute") is True,
+        "deaf": raw.get("deaf") is True,
+        "input_mode": _text_or_none(raw.get("input_mode")),
+    }
+
+
 def _alerts_from_snapshot(raw: Any) -> dict[str, dict[str, Any]]:
     """`/api/state.alerts` → preset id -> row. Absent (an app older than 2026-10-15) or malformed
     reads as "no presets", never an error."""
@@ -433,6 +468,7 @@ def _state_from_snapshot(
         input_overlay_auto_show_at_ms=raw.get("input_overlay_auto_show_at_ms"),
         alerts=_alerts_from_snapshot(raw.get("alerts")),
         connection_status=_status_from_snapshot(raw.get("connection_status")),
+        discord_voice=_discord_voice_view(raw.get("discord_voice")),
         # Preserved across a resync — /api/state doesn't carry them, /api/afk does.
         afk_threshold_secs=previous.afk_threshold_secs if previous else None,
         afk_snooze_until_ms=previous.afk_snooze_until_ms if previous else None,
@@ -485,6 +521,11 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         self._boot_id: str | None = None
         # This socket asked to resume and the app has answered neither `resumed` nor `gap` yet.
         self._awaiting_resume = False
+        # Set by `_apply` when the local Discord session's status row turns `connected`: its
+        # first reading is a baseline the app announces with no event (docs/HA.md "Discord
+        # voice"), so the frame loop re-reads /api/state right after that frame — inline, like a
+        # `resync`, so the frames behind it apply over the fresh snapshot.
+        self._reseed_requested = False
 
     async def _async_update_data(self) -> SwitchboardData:
         try:
@@ -765,6 +806,13 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                                 self._handle_frame(frame)
                             except Exception:  # one bad frame must not kill the loop
                                 _LOGGER.exception("switchboard: failed to handle event frame")
+                            if self._reseed_requested:
+                                # The Discord session just (re)connected; its baseline is only
+                                # in the snapshot. Awaited inline (see the module docstring); a
+                                # failure reconnects, like a `resync`.
+                                self._reseed_requested = False
+                                _LOGGER.debug("switchboard: Discord voice connected — re-reading")
+                                await self._resync()
                         elif msg.type in (
                             aiohttp.WSMsgType.CLOSED,
                             aiohttp.WSMsgType.CLOSING,
@@ -1107,16 +1155,60 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 return False
             if data.connection_status is None:
                 data.connection_status = {}
-            if data.connection_status.get(row["key"]) == row:
+            previous = data.connection_status.get(row["key"])
+            if previous == row:
                 return False
             data.connection_status[row["key"]] = row
+            if row["key"] == DISCORD_RPC_STATUS_KEY:
+                self._discord_status_moved(previous, row)
             return True
 
         if etype == "connection_status_removed":
             key = frame.get("key")
             if not isinstance(key, str) or data.connection_status is None:
                 return False
+            if key == DISCORD_RPC_STATUS_KEY:
+                data.discord_voice = None
             return data.connection_status.pop(key, None) is not None
+
+        if etype == "discord_voice_channel_changed":
+            # The local Discord client joined, switched or left a voice channel / call (docs/HA.md,
+            # app 2026-10-21). Names arrive null without `read_events_sensitive`. Before the slice
+            # is seeded (no live session yet) there is nothing to patch — the re-read on the status
+            # row's `connected` brings the whole state.
+            dv = data.discord_voice
+            if dv is None:
+                return False
+            channel_id = _text_or_none(frame.get("channel_id"))
+            in_voice = channel_id is not None
+            new = {
+                **dv,
+                "in_voice": in_voice,
+                "channel_id": channel_id,
+                "channel_name": _text_or_none(frame.get("channel_name")) if in_voice else None,
+                "guild_name": _text_or_none(frame.get("guild_name")) if in_voice else None,
+                "call_kind": _text_or_none(frame.get("call_kind")) if in_voice else None,
+            }
+            if new == dv:
+                return False
+            data.discord_voice = new
+            return True
+
+        if etype == "discord_voice_settings_changed":
+            # Mute / deafen / input mode changed; the frame carries all three current values.
+            dv = data.discord_voice
+            if dv is None:
+                return False
+            new = {
+                **dv,
+                "mute": frame.get("mute") is True,
+                "deaf": frame.get("deaf") is True,
+                "input_mode": _text_or_none(frame.get("input_mode")) or dv.get("input_mode"),
+            }
+            if new == dv:
+                return False
+            data.discord_voice = new
+            return True
 
         if etype == "variable_changed":
             # One user variable set/incremented — or deleted (`deleted: true`, 2026-10-19; absent
@@ -1234,6 +1326,17 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         # mean creating and removing HA entities at runtime as the user adds and deletes them,
         # which is a bigger product call than this contract sync.)
         return False
+
+    def _discord_status_moved(self, previous: dict[str, Any] | None, row: dict[str, Any]) -> None:
+        """The local Discord session's status row changed. Turning `connected` asks the frame loop
+        to re-read the snapshot (the session's first reading is a baseline sent as no event);
+        leaving it means the voice state is unknown until it comes back."""
+        was_connected = previous is not None and previous.get("state") == "connected"
+        if row["state"] == "connected":
+            if not was_connected:
+                self._reseed_requested = True
+        else:
+            self.data.discord_voice = None
 
     @callback
     def _set_spotify(self, now: dict[str, Any] | None, gate: str) -> bool:

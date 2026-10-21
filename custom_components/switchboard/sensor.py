@@ -16,10 +16,18 @@ from homeassistant.const import EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, SPOTIFY_PAUSED, SPOTIFY_PLAYING, SPOTIFY_STOPPED
+from .const import (
+    DISCORD_MODE_PUSH_TO_TALK,
+    DISCORD_MODE_VOICE_ACTIVITY,
+    DOMAIN,
+    SPOTIFY_PAUSED,
+    SPOTIFY_PLAYING,
+    SPOTIFY_STOPPED,
+)
 from .coordinator import STATUS_SEVERITY, SwitchboardCoordinator, worst_status
 from .entity import (
     SwitchboardAlertEntity,
+    SwitchboardDiscordVoiceEntity,
     SwitchboardHubEntity,
     SwitchboardObsEntity,
     SwitchboardTwitchEntity,
@@ -44,6 +52,7 @@ async def async_setup_entry(
         AppVersionSensor(coordinator, entry),
         FocusedAppSensor(coordinator, entry),
         ConnectionStatusSensor(coordinator, entry),
+        DiscordInputModeSensor(coordinator, entry),
     ]
     for cid in coordinator.obs_ids():
         entities += [
@@ -238,6 +247,22 @@ class SpotifySensor(SwitchboardHubEntity, SensorEntity):
             )
             if now.get(k)
         }
+
+
+class DiscordInputModeSensor(SwitchboardDiscordVoiceEntity, SensorEntity):
+    """The local Discord client's input mode: `voice_activity` or `push_to_talk` (docs/HA.md
+    "Discord voice"). A mode this version does not know reads as unknown, not as a wrong one."""
+
+    _key = "input_mode"
+    _attr_name = "Discord input mode"
+    _attr_icon = "mdi:microphone-settings"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [DISCORD_MODE_VOICE_ACTIVITY, DISCORD_MODE_PUSH_TO_TALK]
+
+    @property
+    def native_value(self) -> str | None:
+        mode = self._voice.get("input_mode")
+        return mode if mode in self._attr_options else None
 
 
 class ConnectionStatusSensor(SwitchboardHubEntity, SensorEntity):

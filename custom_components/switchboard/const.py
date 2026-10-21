@@ -53,3 +53,13 @@ EVENT_SWITCHBOARD = "switchboard_event"
 SPOTIFY_PLAYING = "playing"
 SPOTIFY_PAUSED = "paused"
 SPOTIFY_STOPPED = "stopped"
+
+# The local Discord client's voice session (app 2026-10-21, docs/HA.md "Discord voice"): its row in
+# the connection-status registry. While it reads `connected` the `discord_voice` slice is live; a
+# reconnect's first reading is a baseline that sends no event, so the slice is re-read from
+# /api/state each time the row turns `connected`.
+DISCORD_RPC_STATUS_KEY = "discord/rpc/local"
+
+# The local Discord client's input modes (`discord_voice.input_mode`).
+DISCORD_MODE_VOICE_ACTIVITY = "voice_activity"
+DISCORD_MODE_PUSH_TO_TALK = "push_to_talk"
