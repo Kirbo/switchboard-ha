@@ -151,6 +151,9 @@ presets simply gets none.
   app's default step, 3 dB on OBS, 5 % on the output). An optional `target_peer_id` runs it on a
   paired peer (the `connection` is then that peer's OBS connection id). Maps to
   `obs_audio_volume_set/up/down` (value `-6dB` / `50%`) and `machine_audio_volume_set/up/down`.
+  With a paired-plugin token, `system_output` needs the opt-in **`machine_audio`** scope (since
+  Switchboard 2026-11-04 — before, it rode `machine_control`): a token granted earlier is refused
+  until "Control system volume" is ticked on the plugin's card; the global token always has it.
 - `switchboard.spotify_skip` — `direction: next` or `previous` skips the Spotify track
   (`spotify_next` / `spotify_previous`; Switchboard 2026-10-21 or newer).
 

@@ -524,6 +524,11 @@ DISCORD_403 = (
     "The token needs the `discord_voice` scope: a plugin token paired before 2026-10-21 lacks "
     "it — tick it on the plugin's card in Switchboard, or use the global External API token."
 )
+MACHINE_AUDIO_403 = (
+    "The token needs the opt-in `machine_audio` scope (Switchboard 2026-11-04 moved the system "
+    "volume off `machine_control`): tick 'Control system volume' on the plugin's card in "
+    "Switchboard, or use the global External API token."
+)
 VOLUME_400 = (
     "Check the OBS input name and connection, or that the output device has a software volume "
     f"(HDMI / DisplayPort outputs often have none) — {_NEEDS_2026_10_21}"
@@ -751,7 +756,10 @@ def async_register_services(hass: HomeAssistant) -> None:
                 payload["action_params"] = {"audio_device": device}
         if peer_id:
             payload["target_peer_id"] = peer_id
-        await _send_explained(coord, payload, VOLUME_400)
+        # A 403 on the OS output = a plugin token without the opt-in `machine_audio` scope; on an
+        # OBS input it is an ACL / `obs_control` refusal, which `_send` already words.
+        on_403 = MACHINE_AUDIO_403 if target != VOLUME_OBS_INPUT else None
+        await _send_explained(coord, payload, VOLUME_400, on_403)
 
     async def handle_spotify_skip(call: ServiceCall) -> None:
         coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])

@@ -645,6 +645,21 @@ async def test_set_volume_says_why_the_app_refused(hass: HomeAssistant) -> None:
         await _call(hass, "set_volume", {"target": "system_output", "amount": 40})
 
 
+async def test_set_volume_names_the_machine_audio_scope_on_a_403(hass: HomeAssistant) -> None:
+    """docs/HA.md (2026-11-04): the system volume needs the opt-in `machine_audio` scope, so a
+    plugin token granted before is refused with a 403 — said as what to tick. An OBS input's 403
+    is not about that scope and keeps the plain error."""
+    entry = await _setup(hass)
+    client = _client(hass, entry.entry_id)
+    client.error = SwitchboardAccessError("plugin lacks 'machine_audio' scope")
+    with pytest.raises(HomeAssistantError, match="machine_audio` scope.*Control system volume"):
+        await _call(hass, "set_volume", {"target": "system_output", "amount": 40})
+    client.error = SwitchboardAccessError("plugin lacks 'obs_control' scope")
+    with pytest.raises(HomeAssistantError) as err:
+        await _call(hass, "set_volume", {"target": "obs_input", "input": "Mic", "amount": -6})
+    assert "machine_audio" not in str(err.value)
+
+
 @pytest.mark.parametrize(
     ("direction", "action_type"),
     [("next", "spotify_next"), ("previous", "spotify_previous")],
