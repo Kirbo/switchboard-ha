@@ -328,6 +328,8 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "merged": 0,
         "showing": None,
     },
+    # docs/HA.md (2026-11-05, additive): a refresh signal — one list of the Overlays view changed.
+    {"type": "overlay_presets_changed", "kind": "alerts"},
     {"type": "mesh_identity_reset", "fingerprint": "4c9f84bb"},
     {"type": "peer_lifecycle", "peer_id": CID, "name": "Gaming", "state": "restarting"},
     {"type": "peer_reachability", "peer_id": CID, "name": "Gaming", "online": True},
