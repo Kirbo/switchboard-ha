@@ -4,4 +4,4 @@
 # `pytest-homeassistant-custom-component` pins the Home Assistant version it mirrors (and pytest
 # with it), so bump this one line to test against a newer HA. It needs Python >= 3.14.2 for
 # HA 2026.6+; see mise.toml.
-pytest-homeassistant-custom-component==0.13.357
+pytest-homeassistant-custom-component==0.13.375
