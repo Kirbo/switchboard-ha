@@ -469,8 +469,10 @@ waking, a network flap, or Home Assistant restarting — nothing to reload.
 
 ## Development
 
-The toolchain is pinned in `mise.toml` ([mise](https://mise.jdx.dev/)); Home Assistant itself is a
-pip package, provisioned into `.venv` by the test task.
+The toolchain is pinned to exact versions in `mise.toml` ([mise](https://mise.jdx.dev/)), and the
+committed `mise.lock` records each tool's download URL + checksum per platform; CI installs in locked
+mode, so bump a pin with `mise lock` alongside it. Home Assistant itself is a pip package, provisioned
+into `.venv` by the test task (`requirements-test.txt` pins the HA version tested against).
 
 ```bash
 mise install

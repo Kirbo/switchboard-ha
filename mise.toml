@@ -1,17 +1,33 @@
 # Single source of truth for the toolchain (local + CI). Run `mise install` to provision.
+# EVERY tool is pinned to an exact version, and mise.lock (committed) records each one's download URL
+# + checksum for every platform in `lockfile_platforms` below. CI installs in LOCKED mode
+# (MISE_LOCKED=1 in .github/workflows/validate.yml), so a tool, version or artifact the lock does not
+# name fails the job instead of being fetched. Bump: edit the pin here, then `mise lock` (and check
+# the new version is at least a day old — `minimum_release_age` below; .claude/skills/maintain).
 # This is a Home Assistant custom integration (Python); HA itself is a pip package, not a mise
 # tool — `mise run test` provisions it into .venv with uv and runs the suite.
 [tools]
 # Home Assistant's own runtime: 2026.6+ requires Python >= 3.14.2, so the test venv needs a 3.14
 # interpreter. (The integration's SOURCE still targets py312 — see pyproject `target-version` —
-# because hacs.json still supports HA back to 2025.1, which ran on 3.12.)
-python = "3.14"
+# because hacs.json still supports HA back to 2025.1, which ran on 3.12.) EXACT pin (latest 3.14.x);
+# keep it on the minor Home Assistant's current release requires (pypi `homeassistant`
+# requires_python) and inside it — the `venv` task below names the same interpreter.
+python = "3.14.10"
 # Linter/formatter HA uses; `mise run lint`.
-ruff = "0.16.4"
+ruff = "0.17.3"
 # Fast venv + installer for pulling in homeassistant locally.
-uv = "0.12.5"
+uv = "0.13.7"
 # Changelog/release-notes generator for the CalVer release job (same as the main repo).
-git-cliff = "2.13.1"
+git-cliff = "2.14.2"
+
+[settings]
+# mise.lock: kept current by `mise install` / `mise lock`, for every platform a contributor or CI job
+# runs on (CI is linux-x64; the maintainer's machines are linux-x64 and macos-arm64).
+lockfile = true
+lockfile_platforms = ["linux-x64", "linux-arm64", "macos-arm64", "windows-x64"]
+# Release-age quarantine: a version mise RESOLVES (`mise upgrade --bump`, `mise latest`) skips anything
+# published in the last day. Exact pins are not filtered — check a new pin's age by hand.
+minimum_release_age = "1d"
 
 [tasks.lint]
 description = "Lint the integration with ruff"
@@ -24,7 +40,7 @@ run = "ruff format custom_components tests"
 [tasks.venv]
 description = "Provision .venv with Home Assistant + the test harness"
 run = """
-uv venv --allow-existing --python 3.14 .venv
+uv venv --allow-existing --python "$(mise which python)" .venv
 uv pip install --python .venv/bin/python -r requirements-test.txt
 """
 
