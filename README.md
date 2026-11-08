@@ -162,16 +162,16 @@ presets simply gets none.
   until "Control system volume" is ticked on the plugin's card; the global token always has it.
 - `switchboard.spotify_skip` — `direction: next` or `previous` skips the Spotify track
   (`spotify_next` / `spotify_previous`; Switchboard 2026-10-21 or newer).
-- `switchboard.play_sound` — play a sound on the Switchboard machine's speakers
-  (`machine_sound_play`; Switchboard 2026-11-08 or newer). `preset` is one of the built-in sounds
-  (`blip` — the default, `pop`, `ding`, `chime`, `pluck`, `knock`, `double`, `drop`, `rise`,
-  `click`), or give a `file` instead: an absolute path to a wav / mp3 / flac / ogg / aac / m4a
-  **on the machine that plays it** (at most 32 MiB and 10 minutes). `volume` is `0`–`500`
-  (Switchboard's scale, `100` = the normal level), `device` an output device (blank = the default
-  output — the usual choice). The call returns once the sound has *started*. An optional
-  `target_peer_id` plays it on a paired peer's speakers (the file path and device then name things
-  on that peer). With a paired-plugin token it needs the opt-in **`machine_audio`** scope (tick
-  "Control system volume and sounds" on the plugin's card); the global token always has it.
+- `switchboard.play_sound` — play a **built-in sound** on the Switchboard machine's speakers
+  (`machine_sound_play`; Switchboard 2026-11-08 or newer). `preset` is one of `blip` (the default),
+  `pop`, `ding`, `chime`, `pluck`, `knock`, `double`, `drop`, `rise`, `click`; `volume` is `0`–`500`
+  (Switchboard's scale, `100` = the normal level); `device` an output device (blank = the default
+  output — the usual choice). The call returns once the sound has *started*. There is no file
+  option: Switchboard refuses file paths from outside the app (a token could otherwise probe the
+  machine's disk) — play your own files with an automation inside Switchboard. An optional
+  `target_peer_id` plays it on a paired peer's speakers. With a paired-plugin token it needs the
+  opt-in **`machine_audio`** scope (tick "Control system volume and sounds" on the plugin's card);
+  the global token always has it.
 
 ```yaml
 action:

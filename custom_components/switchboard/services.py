@@ -9,8 +9,8 @@ docs/HA.md) plus typed conveniences for the actions worth a proper UI: `obs_scen
 2026-10-21 machine controls: `discord_voice` (the local Discord client's mute / deafen / input
 mode → `discord_voice_*`), `set_volume` (an OBS input's fader → `obs_audio_volume_*`, or the
 machine's output → `machine_audio_volume_*`) and `spotify_skip` (`spotify_next` / `_previous`),
-and the app 2026-11-08 `play_sound` (a built-in sound or a local audio file on the machine's
-speakers → `machine_sound_play`).
+and the app 2026-11-08 `play_sound` (a built-in sound on the machine's speakers →
+`machine_sound_play`; never a file path — the app refuses those from outside).
 `ha_light_flash` (like `ha_service_call` and `discord_webhook_send`) requires the **global**
 External API token — a scope-limited plugin token cannot call it.
 
@@ -102,7 +102,8 @@ SPOTIFY_SKIP = {"next": "spotify_next", "previous": "spotify_previous"}
 # `play_sound`: the built-in synth presets (`shared/sound-recipes.json` in the app; docs/HA.md
 # Commands, `machine_sound_play`, app 2026-11-08). A free-text `preset` is passed on as typed — the
 # app answers an unknown id with a 400 — so a preset added later works without a release here;
-# these are only what the service's UI offers. `file` plays a local audio file instead.
+# these are only what the service's UI offers. There is NO file option: the app refuses `sound.file`
+# (and `preset: custom`) from outside, since a path would let a token holder probe the filesystem.
 SOUND_PRESETS = [
     "blip",
     "pop",
@@ -115,6 +116,8 @@ SOUND_PRESETS = [
     "rise",
     "click",
 ]
+# The app refuses this one from outside (it means "play the `file`"): said here, with the reason,
+# instead of as an opaque HTTP 400.
 SOUND_PRESET_CUSTOM = "custom"
 # The app's OBS-style volume scale (`SoundParams.volume`): 0–500, 100 = the base level.
 SOUND_VOLUME_MAX = 500
@@ -153,7 +156,6 @@ ATTR_CONNECTION = "connection"
 ATTR_DEVICE = "device"
 ATTR_UNIT = "unit"
 ATTR_DIRECTION = "direction"
-ATTR_FILE = "file"
 ATTR_VOLUME = "volume"
 
 # docs/HA.md Commands: the Auto Twitch account — the account the trigger came from, else the one
@@ -361,26 +363,23 @@ SPOTIFY_SKIP_SCHEMA = vol.Schema(
 
 
 def _sound_rule(data: dict[str, Any]) -> dict[str, Any]:
-    """`file` and `preset` are two ways to say what to play: a file means a custom sound, so a
-    named preset beside it (other than `custom`) would silently lose to one of them. Fails here,
-    with the reason, instead of playing something the caller did not mean."""
-    preset = (data.get(ATTR_PRESET) or "").strip()
-    file = (data.get(ATTR_FILE) or "").strip()
-    if file and preset and preset != SOUND_PRESET_CUSTOM:
-        raise vol.Invalid("give a `preset` or a `file`, not both", [ATTR_FILE])
-    if preset == SOUND_PRESET_CUSTOM and not file:
-        raise vol.Invalid("`file` is required when `preset` is custom", [ATTR_FILE])
+    """`custom` means "play a file", which the app refuses from outside: fail with the reason."""
+    if (data.get(ATTR_PRESET) or "").strip() == SOUND_PRESET_CUSTOM:
+        raise vol.Invalid(
+            "custom sounds (a file path) are not available through Switchboard's external API — "
+            "use a built-in preset",
+            [ATTR_PRESET],
+        )
     return data
 
 
 # `machine_sound_play` acts on the Switchboard MACHINE's own speakers — no connection. The
 # optional `target_peer_id` plays it on a paired peer instead (docs/HA.md Commands), where a
-# `file` / `device` then name a path / output on THAT machine.
+# `device` then names an output on THAT machine.
 PLAY_SOUND_SCHEMA = vol.All(
     vol.Schema(
         {
             vol.Optional(ATTR_PRESET, default=""): cv.string,
-            vol.Optional(ATTR_FILE, default=""): cv.string,
             vol.Optional(ATTR_VOLUME): vol.All(
                 vol.Coerce(int), vol.Range(min=0, max=SOUND_VOLUME_MAX)
             ),
@@ -589,9 +588,8 @@ MACHINE_AUDIO_403 = (
     "API token."
 )
 SOUND_400 = (
-    "Check the preset name, that `file` is a readable wav / mp3 / flac / ogg / aac / m4a on "
-    "Switchboard's machine (at most 32 MiB and 10 minutes), and the output device — "
-    "`machine_sound_play` needs Switchboard 2026-11-08 or newer."
+    "Check the preset name and the output device — `machine_sound_play` needs Switchboard "
+    "2026-11-08 or newer."
 )
 VOLUME_400 = (
     "Check the OBS input name and connection, or that the output device has a software volume "
@@ -840,13 +838,9 @@ def async_register_services(hass: HomeAssistant) -> None:
 
     async def handle_play_sound(call: ServiceCall) -> None:
         coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
-        file = call.data[ATTR_FILE].strip()
         preset = call.data[ATTR_PRESET].strip()
         sound: dict[str, Any] = {}
-        if file:
-            sound["preset"] = SOUND_PRESET_CUSTOM
-            sound["file"] = file
-        elif preset:
+        if preset:
             sound["preset"] = preset
         if (volume := call.data.get(ATTR_VOLUME)) is not None:
             sound["volume"] = volume

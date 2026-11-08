@@ -471,11 +471,6 @@ play_sound:
             - drop
             - rise
             - click
-    file:
-      required: false
-      example: /home/me/sounds/airhorn.mp3
-      selector:
-        text:
     volume:
       required: false
       example: 100

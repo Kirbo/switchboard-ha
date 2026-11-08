@@ -734,17 +734,15 @@ async def test_play_sound_volume_zero_is_sent_not_dropped(hass: HomeAssistant) -
     assert _client(hass, entry.entry_id).commands[-1]["action_params"] == {"sound": {"volume": 0}}
 
 
-async def test_play_sound_a_file_is_a_custom_preset(hass: HomeAssistant) -> None:
+async def test_play_sound_has_no_file_option(hass: HomeAssistant) -> None:
+    """The app refuses `sound.file` from outside (a path would let a token probe the disk), so the
+    service has no such field and a `file` is rejected before anything is sent."""
     entry = await _setup(hass)
-    await _call(hass, "play_sound", {"file": " /home/me/sounds/airhorn.mp3 "})
-    assert _client(hass, entry.entry_id).commands[-1]["action_params"] == {
-        "sound": {"preset": "custom", "file": "/home/me/sounds/airhorn.mp3"}
-    }
-    # Naming `custom` beside the file says the same thing.
-    await _call(hass, "play_sound", {"preset": "custom", "file": "/a.wav"})
-    assert _client(hass, entry.entry_id).commands[-1]["action_params"] == {
-        "sound": {"preset": "custom", "file": "/a.wav"}
-    }
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "play_sound", {"file": "/etc/passwd"})
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "play_sound", {"preset": "ding", "file": "/a.wav"})
+    assert _client(hass, entry.entry_id).commands == []
 
 
 async def test_play_sound_on_a_peer_names_the_peer(hass: HomeAssistant) -> None:
@@ -762,9 +760,8 @@ async def test_play_sound_on_a_peer_names_the_peer(hass: HomeAssistant) -> None:
 @pytest.mark.parametrize(
     ("data", "match"),
     [
-        ({"preset": "ding", "file": "/a.wav"}, "not both"),
-        ({"preset": "custom"}, "`file` is required"),
-        ({"preset": "custom", "file": "  "}, "`file` is required"),
+        ({"preset": "custom"}, "not available through"),
+        ({"preset": " custom "}, "not available through"),
         ({"volume": -1}, None),
         ({"volume": 501}, None),
         ({"volume": "loud"}, None),
