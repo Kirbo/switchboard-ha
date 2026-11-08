@@ -67,6 +67,8 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "friendly_name": "Studio Door",
     },
     {"type": "machine_state_changed", "state": "afk", "source": "External API"},
+    # 2026-11-08: this machine's node role changed ("broadcaster" | "source") — no entity reads it.
+    {"type": "node_role_changed", "role": "broadcaster"},
     {"type": "variable_changed", "name": "deaths", "value": "5", "deleted": False},
     {"type": "overlay_countdown", "ends_at_ms": 1700000000000, "label": "Starting soon"},
     {
@@ -356,6 +358,8 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         ],
         # 2026-10: the peer's Discord route names; null = its snapshot predates routes.
         "discord_routes": ["Clips", "Moderation"],
+        # 2026-11-08: the peer's node role; null = the peer predates roles.
+        "node_role": "broadcaster",
     },
     {"type": "opendeck_connection", "plugin_id": CID, "name": "Deck", "connected": True},
     {"type": "plugin_paired", "name": "Deck"},
@@ -574,6 +578,8 @@ API_STATE: dict[str, Any] = {
     ],
     "spotify": "playing",
     "afk": False,
+    # 2026-11-08: this machine's node role — tolerated, no entity reads it.
+    "node_role": "source",
     "seq": 1756800000123,
     "spotify_now": {
         "playing": True,
