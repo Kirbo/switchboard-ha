@@ -488,3 +488,25 @@ async def test_diagnostics_redact_the_discord_names(hass: HomeAssistant) -> None
     assert voice["channel_name"] == "**REDACTED**"
     assert voice["guild_name"] == "**REDACTED**"
     assert voice["channel_id"] == "100000000000000001"
+
+
+async def test_diagnostics_redact_variables_apps_and_the_spotify_track(
+    hass: HomeAssistant,
+) -> None:
+    from custom_components.switchboard.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    entry = await _setup(
+        hass,
+        state={
+            **API_STATE,
+            "variables": {"last_follower": "secret_viewer_name"},
+            "apps": {"focused": "secret-game.exe", "running": ["secret-game.exe"]},
+        },
+    )
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    for key in ("variables", "focused_app", "running_apps", "spotify_now"):
+        assert diag["data"][key] == "**REDACTED**"
+    assert "secret_viewer_name" not in str(diag)
+    assert "secret-game.exe" not in str(diag)

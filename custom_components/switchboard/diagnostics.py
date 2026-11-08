@@ -16,7 +16,16 @@ from .coordinator import SwitchboardCoordinator
 TO_REDACT = {CONF_TOKEN}
 # Which Discord voice channel the streamer sits in, and on which server, says who they are with
 # (docs/HA.md "Two read scopes") — a diagnostics file is pasted into public bug reports.
-DATA_TO_REDACT = {"channel_name", "guild_name"}
+# User variables, the focused / running apps and the Spotify track are the same kind of personal
+# data (a variable can hold a viewer's name, an app list says what the streamer does).
+DATA_TO_REDACT = {
+    "channel_name",
+    "guild_name",
+    "variables",
+    "focused_app",
+    "running_apps",
+    "spotify_now",
+}
 
 
 async def async_get_config_entry_diagnostics(
