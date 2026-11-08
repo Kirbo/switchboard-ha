@@ -455,6 +455,36 @@
           "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
       }
+    },
+    "play_sound": {
+      "name": "Play sound",
+      "description": "Play a built-in sound or a local audio file on the speakers of the Switchboard machine (or a paired peer). Returns once the sound has started. With a paired-plugin token this needs the opt-in machine_audio scope. Needs Switchboard 2026-11-08 or newer.",
+      "fields": {
+        "preset": {
+          "name": "Sound",
+          "description": "A built-in sound: blip (the default), pop, ding, chime, pluck, knock, double, drop, rise or click. Leave blank to play the default blip, or when you give a file."
+        },
+        "file": {
+          "name": "Audio file",
+          "description": "An absolute path to a wav, mp3, flac, ogg, aac or m4a file ON the machine that plays it (at most 32 MiB and 10 minutes). Use this instead of a sound."
+        },
+        "volume": {
+          "name": "Volume",
+          "description": "0 to 500, Switchboard's own scale: 100 = the normal level. Leave blank for 100."
+        },
+        "device": {
+          "name": "Output device",
+          "description": "The output to play on (a PulseAudio/PipeWire sink name on Linux, a device id on Windows/macOS). Leave blank for the default output — the usual choice."
+        },
+        "target_peer_id": {
+          "name": "Peer machine",
+          "description": "Optional id of a paired peer machine (Switchboard /api/peers) to play on over the encrypted mesh — its own speakers; the file path and output device then name things on that peer. The peer must have granted this Switchboard the actions scope. Leave blank for this Switchboard's machine."
+        },
+        "entry_id": {
+          "name": "Switchboard instance",
+          "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
+        }
+      }
     }
   }
 }

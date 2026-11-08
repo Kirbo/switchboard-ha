@@ -582,6 +582,42 @@ async def test_input_overlay_visibility_event_drives_the_flag(hass: HomeAssistan
     assert _state_from_snapshot({}).input_overlay_visible is True
 
 
+async def test_decision_waiting_event_drives_the_flag_and_the_kinds(hass: HomeAssistant) -> None:
+    """A decision waiting in the app (docs/HA.md "Decision waiting"): the contract snapshot seeds
+    it; the event carries the whole new state, both ways; unknown kinds are kept; a malformed
+    frame reads as nothing waiting rather than leaving a stale flag."""
+    coord = make_coordinator(hass)
+    assert coord.data.decision_waiting is True
+    assert coord.data.decision_needs == ["plugin_pair"]
+    assert coord._apply(
+        {
+            "type": "decision_waiting_changed",
+            "waiting": True,
+            "needs": ["input_consent", "deep_link"],
+        }
+    )
+    assert coord.data.decision_waiting is True
+    assert coord.data.decision_needs == ["deep_link", "input_consent"], "sorted"
+    assert coord._apply(
+        {"type": "decision_waiting_changed", "waiting": True, "needs": ["a_new_kind"]}
+    )
+    assert coord.data.decision_needs == ["a_new_kind"], "a kind this version has never heard of"
+    assert coord._apply({"type": "decision_waiting_changed", "waiting": False, "needs": []})
+    assert coord.data.decision_waiting is False
+    assert coord.data.decision_needs == []
+    assert coord._apply(
+        {"type": "decision_waiting_changed", "waiting": True, "needs": ["deep_link"]}
+    )
+    assert coord._apply({"type": "decision_waiting_changed"})
+    assert coord.data.decision_waiting is False
+    assert coord.data.decision_needs == []
+    # No flag but kinds listed agree with "waiting"; an explicit false wins over stray kinds.
+    assert coord._apply({"type": "decision_waiting_changed", "needs": ["plugin_pair"]})
+    assert coord.data.decision_waiting is True
+    assert coord._apply({"type": "decision_waiting_changed", "waiting": False, "needs": ["x"]})
+    assert coord.data.decision_waiting is False
+
+
 def _alert_frame(**fields: Any) -> dict[str, Any]:
     return {
         "type": "alert_queue_changed",

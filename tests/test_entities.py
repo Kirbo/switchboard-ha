@@ -79,6 +79,10 @@ async def test_entities_are_created_from_the_snapshot(hass: HomeAssistant) -> No
     assert overlays.state == "off"
     assert overlays.attributes["auto_show_at"] == "2023-11-14T22:18:20+00:00"
 
+    decision = hass.states.get(f"binary_sensor.{hub}_decision_waiting")
+    assert decision.state == "on"
+    assert decision.attributes["needs"] == ["plugin_pair"]
+
     afk = hass.states.get(f"binary_sensor.{hub}_afk")
     assert afk.state == "off"
     assert afk.attributes["threshold_secs"] == 180

@@ -145,6 +145,13 @@ class SwitchboardData:
     # auto-show timer brings them back (None = no timer). Kept live by `input_overlay_visibility`.
     input_overlay_visible: bool = True
     input_overlay_auto_show_at_ms: int | None = None
+    # A decision is waiting on the user in the app (app 2026-11-08, additive on /api/state as
+    # `decision_waiting`; absent on older apps = nothing waiting): a plugin pairing request, a
+    # staged deep-link command or the capture-consent ask. `decision_needs` names the kinds
+    # (`plugin_pair` / `deep_link` / `input_consent`, sorted — the list may grow). Seeded from the
+    # snapshot, kept live by `decision_waiting_changed`.
+    decision_waiting: bool = False
+    decision_needs: list[str] = field(default_factory=list)
     # Alert presets' queues (app 2026-10-15, additive on /api/state as `alerts`; absent on older
     # apps = no presets): preset id -> {name, queued, paused, showing, dropped, merged}. Seeded
     # from the snapshot, kept live by `alert_queue_changed`; a deleted preset's last all-zero
@@ -342,6 +349,23 @@ def _alerts_from_snapshot(raw: Any) -> dict[str, dict[str, Any]]:
     return {str(pid): _alert_view(row) for pid, row in raw.items() if isinstance(row, dict)}
 
 
+def _decision_fields(raw: Any) -> dict[str, Any]:
+    """`/api/state.decision_waiting` — and the `decision_waiting_changed` frame, which carries the
+    same two fields — as the data fields (docs/HA.md "Decision waiting", app 2026-11-08). Absent
+    (an older app) or malformed reads as "nothing waiting", never an error; kinds this version does
+    not know are kept (the list may grow)."""
+    if not isinstance(raw, dict):
+        return {"decision_waiting": False, "decision_needs": []}
+    listed = raw.get("needs")
+    needs = sorted({n for n in listed if isinstance(n, str)}) if isinstance(listed, list) else []
+    waiting = raw.get("waiting")
+    # The app's flag decides; kinds with no flag at all agree with "waiting".
+    return {
+        "decision_waiting": waiting is True or (waiting is None and bool(needs)),
+        "decision_needs": needs,
+    }
+
+
 @callback
 def _is_restart_call(event_data: Any) -> bool:
     return event_data.get("domain") == "homeassistant" and event_data.get("service") == "restart"
@@ -466,6 +490,7 @@ def _state_from_snapshot(
         variables={str(k): str(v) for k, v in (raw.get("variables") or {}).items()},
         input_overlay_visible=raw.get("input_overlay_visible", True) is not False,
         input_overlay_auto_show_at_ms=raw.get("input_overlay_auto_show_at_ms"),
+        **_decision_fields(raw.get("decision_waiting")),
         alerts=_alerts_from_snapshot(raw.get("alerts")),
         connection_status=_status_from_snapshot(raw.get("connection_status")),
         discord_voice=_discord_voice_view(raw.get("discord_voice")),
@@ -1129,6 +1154,14 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             data.input_overlay_visible = frame.get("visible") is not False
             at = frame.get("auto_show_at_ms")
             data.input_overlay_auto_show_at_ms = at if isinstance(at, int) else None
+            return True
+
+        if etype == "decision_waiting_changed":
+            # The app has a decision waiting on the user (or the last one was answered): the whole
+            # new state, change-only (docs/HA.md "Decision waiting").
+            fields = _decision_fields(frame)
+            data.decision_waiting = fields["decision_waiting"]
+            data.decision_needs = fields["decision_needs"]
             return True
 
         if etype == "alert_queue_changed":

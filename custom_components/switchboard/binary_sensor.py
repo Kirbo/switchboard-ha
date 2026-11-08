@@ -44,6 +44,7 @@ async def async_setup_entry(
     entities: list[BinarySensorEntity] = [
         SwitchboardAfkSensor(coordinator, entry),
         SwitchboardInputOverlaySensor(coordinator, entry),
+        SwitchboardDecisionWaitingSensor(coordinator, entry),
         SwitchboardAppActiveSensor(coordinator, entry),
         UpdateAvailableSensor(coordinator, entry),
         NeedsReauthSensor(coordinator, entry),
@@ -221,6 +222,31 @@ class SwitchboardInputOverlaySensor(SwitchboardHubEntity, BinarySensorEntity):
                 None if at is None else datetime.fromtimestamp(at / 1000, tz=UTC).isoformat()
             ),
         }
+
+
+class SwitchboardDecisionWaitingSensor(SwitchboardHubEntity, BinarySensorEntity):
+    """Whether Switchboard has a decision waiting on you in the app (app 2026-11-08+).
+
+    On = a plugin pairing request, a staged `switchboard://` command or the capture-consent ask is
+    blocked on your answer — the one to notify your phone on while the window is hidden or on
+    another view. `needs` names the kinds (`plugin_pair`, `deep_link`, `input_consent`; the list
+    may grow). Switchboard's own state, pushed (`decision_waiting_changed`) — never polled.
+    """
+
+    _attr_name = "Decision waiting"
+    _attr_icon = "mdi:bell-badge-outline"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_decision_waiting"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator.data.decision_waiting)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        return {"needs": list(self.coordinator.data.decision_needs)}
 
 
 class SwitchboardAppActiveSensor(SwitchboardHubEntity, BinarySensorEntity):

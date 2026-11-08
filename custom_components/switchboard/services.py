@@ -8,7 +8,9 @@ docs/HA.md) plus typed conveniences for the actions worth a proper UI: `obs_scen
 `alert_resume` / `alert_replay` (`overlay_alert_skip` / … — app 2026-10-15), and the app
 2026-10-21 machine controls: `discord_voice` (the local Discord client's mute / deafen / input
 mode → `discord_voice_*`), `set_volume` (an OBS input's fader → `obs_audio_volume_*`, or the
-machine's output → `machine_audio_volume_*`) and `spotify_skip` (`spotify_next` / `_previous`).
+machine's output → `machine_audio_volume_*`) and `spotify_skip` (`spotify_next` / `_previous`),
+and the app 2026-11-08 `play_sound` (a built-in sound or a local audio file on the machine's
+speakers → `machine_sound_play`).
 `ha_light_flash` (like `ha_service_call` and `discord_webhook_send`) requires the **global**
 External API token — a scope-limited plugin token cannot call it.
 
@@ -71,6 +73,7 @@ ALERT_CONTROLS = {
 SERVICE_DISCORD_VOICE = "discord_voice"
 SERVICE_SET_VOLUME = "set_volume"
 SERVICE_SPOTIFY_SKIP = "spotify_skip"
+SERVICE_PLAY_SOUND = "play_sound"
 
 # `discord_voice` service action → the contract's action id (docs/HA.md Commands, app 2026-10-21).
 DISCORD_VOICE_ACTIONS = {
@@ -95,6 +98,26 @@ UNIT_PERCENT = "percent"
 VOLUME_UNITS = [UNIT_DB, UNIT_PERCENT]
 
 SPOTIFY_SKIP = {"next": "spotify_next", "previous": "spotify_previous"}
+
+# `play_sound`: the built-in synth presets (`shared/sound-recipes.json` in the app; docs/HA.md
+# Commands, `machine_sound_play`, app 2026-11-08). A free-text `preset` is passed on as typed — the
+# app answers an unknown id with a 400 — so a preset added later works without a release here;
+# these are only what the service's UI offers. `file` plays a local audio file instead.
+SOUND_PRESETS = [
+    "blip",
+    "pop",
+    "ding",
+    "chime",
+    "pluck",
+    "knock",
+    "double",
+    "drop",
+    "rise",
+    "click",
+]
+SOUND_PRESET_CUSTOM = "custom"
+# The app's OBS-style volume scale (`SoundParams.volume`): 0–500, 100 = the base level.
+SOUND_VOLUME_MAX = 500
 
 ATTR_ACTION_TYPE = "action_type"
 ATTR_TARGET = "target"
@@ -130,6 +153,8 @@ ATTR_CONNECTION = "connection"
 ATTR_DEVICE = "device"
 ATTR_UNIT = "unit"
 ATTR_DIRECTION = "direction"
+ATTR_FILE = "file"
+ATTR_VOLUME = "volume"
 
 # docs/HA.md Commands: the Auto Twitch account — the account the trigger came from, else the one
 # that is live on the machine running the action (an /api command has no trigger, so: the live
@@ -335,6 +360,39 @@ SPOTIFY_SKIP_SCHEMA = vol.Schema(
 )
 
 
+def _sound_rule(data: dict[str, Any]) -> dict[str, Any]:
+    """`file` and `preset` are two ways to say what to play: a file means a custom sound, so a
+    named preset beside it (other than `custom`) would silently lose to one of them. Fails here,
+    with the reason, instead of playing something the caller did not mean."""
+    preset = (data.get(ATTR_PRESET) or "").strip()
+    file = (data.get(ATTR_FILE) or "").strip()
+    if file and preset and preset != SOUND_PRESET_CUSTOM:
+        raise vol.Invalid("give a `preset` or a `file`, not both", [ATTR_FILE])
+    if preset == SOUND_PRESET_CUSTOM and not file:
+        raise vol.Invalid("`file` is required when `preset` is custom", [ATTR_FILE])
+    return data
+
+
+# `machine_sound_play` acts on the Switchboard MACHINE's own speakers — no connection. The
+# optional `target_peer_id` plays it on a paired peer instead (docs/HA.md Commands), where a
+# `file` / `device` then name a path / output on THAT machine.
+PLAY_SOUND_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Optional(ATTR_PRESET, default=""): cv.string,
+            vol.Optional(ATTR_FILE, default=""): cv.string,
+            vol.Optional(ATTR_VOLUME): vol.All(
+                vol.Coerce(int), vol.Range(min=0, max=SOUND_VOLUME_MAX)
+            ),
+            vol.Optional(ATTR_DEVICE, default=""): cv.string,
+            vol.Optional(ATTR_TARGET_PEER_ID, default=""): cv.string,
+            **_ENTRY_FIELD,
+        }
+    ),
+    _sound_rule,
+)
+
+
 def _num(amount: float) -> str:
     """A number as the app's value grammar reads it: `6`, not `6.0`; `2.5` stays."""
     return f"{amount:g}"
@@ -526,8 +584,14 @@ DISCORD_403 = (
 )
 MACHINE_AUDIO_403 = (
     "The token needs the opt-in `machine_audio` scope (Switchboard 2026-11-04 moved the system "
-    "volume off `machine_control`): tick 'Control system volume' on the plugin's card in "
-    "Switchboard, or use the global External API token."
+    "volume off `machine_control`; playing a sound needs it too since 2026-11-08): tick 'Control "
+    "system volume and sounds' on the plugin's card in Switchboard, or use the global External "
+    "API token."
+)
+SOUND_400 = (
+    "Check the preset name, that `file` is a readable wav / mp3 / flac / ogg / aac / m4a on "
+    "Switchboard's machine (at most 32 MiB and 10 minutes), and the output device — "
+    "`machine_sound_play` needs Switchboard 2026-11-08 or newer."
 )
 VOLUME_400 = (
     "Check the OBS input name and connection, or that the output device has a software volume "
@@ -774,6 +838,34 @@ def async_register_services(hass: HomeAssistant) -> None:
             SPOTIFY_400,
         )
 
+    async def handle_play_sound(call: ServiceCall) -> None:
+        coord, _ = _pick(hass, "", call.data[ATTR_ENTRY_ID])
+        file = call.data[ATTR_FILE].strip()
+        preset = call.data[ATTR_PRESET].strip()
+        sound: dict[str, Any] = {}
+        if file:
+            sound["preset"] = SOUND_PRESET_CUSTOM
+            sound["file"] = file
+        elif preset:
+            sound["preset"] = preset
+        if (volume := call.data.get(ATTR_VOLUME)) is not None:
+            sound["volume"] = volume
+        if device := call.data[ATTR_DEVICE].strip():
+            # Absent = the default output; a name/id names an output on the machine that plays it.
+            sound["sink"] = device
+        # No connection: the machine's own speakers (docs/HA.md — send the target blank). An
+        # empty `sound` is the app's default blip at the base volume.
+        payload: dict[str, Any] = {
+            "action_type": "machine_sound_play",
+            "target_connection_id": "",
+            "value": "",
+            "action_params": {"sound": sound},
+        }
+        if peer_id := call.data[ATTR_TARGET_PEER_ID].strip():
+            payload["target_peer_id"] = peer_id
+        # A 403 = a plugin token without the opt-in `machine_audio` scope.
+        await _send_explained(coord, payload, SOUND_400, MACHINE_AUDIO_403)
+
     for service, action_type in ALERT_CONTROLS.items():
         _register(hass, service, make_alert_handler(action_type), ALERT_CONTROL_SCHEMA)
 
@@ -802,3 +894,4 @@ def async_register_services(hass: HomeAssistant) -> None:
     _register(hass, SERVICE_DISCORD_VOICE, handle_discord_voice, DISCORD_VOICE_SCHEMA)
     _register(hass, SERVICE_SET_VOLUME, handle_set_volume, SET_VOLUME_SCHEMA)
     _register(hass, SERVICE_SPOTIFY_SKIP, handle_spotify_skip, SPOTIFY_SKIP_SCHEMA)
+    _register(hass, SERVICE_PLAY_SOUND, handle_play_sound, PLAY_SOUND_SCHEMA)

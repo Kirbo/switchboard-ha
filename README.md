@@ -129,6 +129,12 @@ presets simply gets none.
   input overlay (keyboard, mouse, gamepad) on the stream, `"true"` shows them, `"toggle"`
   (default) flips. Needs a Switchboard build from 2026-09-19 or newer; the `Input overlays
   visible` binary sensor mirrors the result.
+- The `Decision waiting` binary sensor (Switchboard 2026-11-08 or newer) is **on** while the app has
+  a decision waiting on you — a plugin pairing request, a staged `switchboard://` command or the
+  input-capture consent ask — and its `needs` attribute names the kinds (`plugin_pair`,
+  `deep_link`, `input_consent`; more may follow). Switchboard's own state, pushed by
+  `decision_waiting_changed`: use it to notify your phone when the window is hidden. An older app
+  has no such state and the sensor stays off.
 - `switchboard.light_flash` — blink a light or light group N times in a colour through
   *Switchboard's own* downstream Home Assistant connection, then restore its previous state.
   Like every `ha_*` action this needs the **global** External API token, not a paired-plugin one.
@@ -156,6 +162,16 @@ presets simply gets none.
   until "Control system volume" is ticked on the plugin's card; the global token always has it.
 - `switchboard.spotify_skip` — `direction: next` or `previous` skips the Spotify track
   (`spotify_next` / `spotify_previous`; Switchboard 2026-10-21 or newer).
+- `switchboard.play_sound` — play a sound on the Switchboard machine's speakers
+  (`machine_sound_play`; Switchboard 2026-11-08 or newer). `preset` is one of the built-in sounds
+  (`blip` — the default, `pop`, `ding`, `chime`, `pluck`, `knock`, `double`, `drop`, `rise`,
+  `click`), or give a `file` instead: an absolute path to a wav / mp3 / flac / ogg / aac / m4a
+  **on the machine that plays it** (at most 32 MiB and 10 minutes). `volume` is `0`–`500`
+  (Switchboard's scale, `100` = the normal level), `device` an output device (blank = the default
+  output — the usual choice). The call returns once the sound has *started*. An optional
+  `target_peer_id` plays it on a paired peer's speakers (the file path and device then name things
+  on that peer). With a paired-plugin token it needs the opt-in **`machine_audio`** scope (tick
+  "Control system volume and sounds" on the plugin's card); the global token always has it.
 
 ```yaml
 action:
@@ -177,6 +193,10 @@ action:
   - service: switchboard.spotify_skip
     data:
       direction: next
+  - service: switchboard.play_sound
+    data:
+      preset: ding
+      volume: 150
 ```
 
 `target` accepts a friendly connection **label** or its **id** (anything that isn't a known
