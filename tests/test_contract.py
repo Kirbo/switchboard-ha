@@ -75,6 +75,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "auto_show_at_ms": 1700000300000,
         "source": "OpenDeck",
     },
+    {"type": "decision_waiting_changed", "waiting": True, "needs": ["plugin_pair"]},
     {"type": "hotkey_pressed", "combo": "KEY_LEFTCTRL+KEY_M"},
     {"type": "obs_disk_space", "connection_id": CID, "free_mb": 12698, "low": True},
     {"type": "obs_stream_stalled", "connection_id": CID, "seconds": 17, "restarted": True},
@@ -619,6 +620,7 @@ API_STATE: dict[str, Any] = {
     "variables": {"deaths": "3", "mode": "gaming"},
     "input_overlay_visible": False,
     "input_overlay_auto_show_at_ms": 1700000300000,
+    "decision_waiting": {"waiting": True, "needs": ["plugin_pair"]},
     "obs_sources": {
         CID: [
             {
@@ -745,6 +747,8 @@ def test_api_state_maps_every_documented_field() -> None:
     assert data.afk is False  # machine_state "active"
     assert data.input_overlay_visible is False
     assert data.input_overlay_auto_show_at_ms == 1700000300000
+    assert data.decision_waiting is True
+    assert data.decision_needs == ["plugin_pair"]
     assert data.focused_app == "steam_app_599140"
     assert data.running_apps == ["steam_app_599140"]
     assert data.watched_focused is True
@@ -790,6 +794,24 @@ def test_api_state_tolerates_the_obs_source_rows() -> None:
     # An older app omits the key entirely.
     older = {k: v for k, v in API_STATE.items() if k != "obs_sources"}
     assert _state_from_snapshot(older).obs == data.obs
+
+
+def test_api_state_tolerates_an_app_without_decision_waiting() -> None:
+    """An app older than 2026-11-08 sends no `decision_waiting`: nothing waiting, no error."""
+    data = _state_from_snapshot({})
+    assert data.decision_waiting is False
+    assert data.decision_needs == []
+    for junk in (None, "yes", 1, [], {"waiting": "yes", "needs": "deep_link"}):
+        data = _state_from_snapshot({"decision_waiting": junk})
+        assert data.decision_waiting is False, junk
+        assert data.decision_needs == [], junk
+
+
+def test_decision_waiting_frame_carries_the_documented_fields() -> None:
+    frame = next(f for f in DOCUMENTED_EVENTS if f["type"] == "decision_waiting_changed")
+    assert set(frame) == {"type", "waiting", "needs"}
+    assert isinstance(frame["waiting"], bool)
+    assert all(isinstance(n, str) for n in frame["needs"])
 
 
 def test_api_state_tolerates_an_app_without_alert_presets() -> None:

@@ -688,3 +688,110 @@ async def test_spotify_skip_validates_and_explains(hass: HomeAssistant) -> None:
     )
     with pytest.raises(HomeAssistantError, match="2026-10-21"):
         await _call(hass, "spotify_skip", {"direction": "next"})
+
+
+# --- play_sound → machine_sound_play (docs/HA.md Commands, app 2026-11-08) -----------------------
+
+
+async def test_play_sound_with_no_arguments_plays_the_apps_default(hass: HomeAssistant) -> None:
+    """Nothing to choose: an empty `sound` is the app's default blip at the base volume — and no
+    connection (the machine's own speakers: a blank target, never a resolved default)."""
+    entry = await _setup(hass)
+    await _call(hass, "play_sound", {})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "machine_sound_play",
+        "target_connection_id": "",
+        "value": "",
+        "action_params": {"sound": {}},
+    }
+
+
+async def test_play_sound_names_the_preset_volume_and_output(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "play_sound",
+        {"preset": " ding ", "volume": 150, "device": "alsa_output.usb-headset.analog-stereo"},
+    )
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "machine_sound_play",
+        "target_connection_id": "",
+        "value": "",
+        "action_params": {
+            "sound": {
+                "preset": "ding",
+                "volume": 150,
+                "sink": "alsa_output.usb-headset.analog-stereo",
+            }
+        },
+    }
+
+
+async def test_play_sound_volume_zero_is_sent_not_dropped(hass: HomeAssistant) -> None:
+    """0 is a real (silent) level — `if volume:` would have swallowed it."""
+    entry = await _setup(hass)
+    await _call(hass, "play_sound", {"volume": 0})
+    assert _client(hass, entry.entry_id).commands[-1]["action_params"] == {"sound": {"volume": 0}}
+
+
+async def test_play_sound_has_no_file_option(hass: HomeAssistant) -> None:
+    """The app refuses `sound.file` from outside (a path would let a token probe the disk), so the
+    service has no such field and a `file` is rejected before anything is sent."""
+    entry = await _setup(hass)
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "play_sound", {"file": "/etc/passwd"})
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "play_sound", {"preset": "ding", "file": "/a.wav"})
+    assert _client(hass, entry.entry_id).commands == []
+
+
+async def test_play_sound_on_a_peer_names_the_peer(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    await _call(hass, "play_sound", {"preset": "chime", "target_peer_id": "peer-1"})
+    assert _client(hass, entry.entry_id).commands[-1] == {
+        "action_type": "machine_sound_play",
+        "target_connection_id": "",
+        "value": "",
+        "action_params": {"sound": {"preset": "chime"}},
+        "target_peer_id": "peer-1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("data", "match"),
+    [
+        ({"preset": "custom"}, "not available through"),
+        ({"preset": " custom "}, "not available through"),
+        ({"volume": -1}, None),
+        ({"volume": 501}, None),
+        ({"volume": "loud"}, None),
+    ],
+)
+async def test_play_sound_refuses_a_call_the_app_would_misread(
+    hass: HomeAssistant, data: dict, match: str | None
+) -> None:
+    entry = await _setup(hass)
+    with pytest.raises(vol.Invalid, match=match):
+        await _call(hass, "play_sound", data)
+    assert _client(hass, entry.entry_id).commands == []
+
+
+async def test_play_sound_passes_an_unknown_preset_to_the_app(hass: HomeAssistant) -> None:
+    """The preset list is the app's: a preset added after this release must still be playable, so
+    the service does not whitelist it — the app answers an unknown one with a 400."""
+    entry = await _setup(hass)
+    await _call(hass, "play_sound", {"preset": "airhorn2"})
+    assert _client(hass, entry.entry_id).commands[-1]["action_params"] == {
+        "sound": {"preset": "airhorn2"}
+    }
+
+
+async def test_play_sound_says_why_the_app_refused(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    client = _client(hass, entry.entry_id)
+    client.error = SwitchboardApiError('command failed: HTTP 400 unknown sound preset "nope"')
+    with pytest.raises(HomeAssistantError, match="preset name.*2026-11-08"):
+        await _call(hass, "play_sound", {"preset": "nope"})
+    client.error = SwitchboardAccessError("plugin lacks 'machine_audio' scope")
+    with pytest.raises(HomeAssistantError, match="machine_audio` scope.*sounds"):
+        await _call(hass, "play_sound", {})

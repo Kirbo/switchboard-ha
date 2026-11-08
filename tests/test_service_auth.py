@@ -42,6 +42,7 @@ SERVICE_DATA: dict[str, dict] = {
     "discord_voice": {"action": "toggle_mute"},
     "set_volume": {"target": "system_output", "mode": "up"},
     "spotify_skip": {"direction": "next"},
+    "play_sound": {},
 }
 
 

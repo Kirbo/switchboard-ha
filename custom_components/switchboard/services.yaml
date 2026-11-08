@@ -451,3 +451,47 @@ spotify_skip:
       selector:
         config_entry:
           integration: switchboard
+
+play_sound:
+  fields:
+    preset:
+      required: false
+      example: ding
+      selector:
+        select:
+          custom_value: true
+          options:
+            - blip
+            - pop
+            - ding
+            - chime
+            - pluck
+            - knock
+            - double
+            - drop
+            - rise
+            - click
+    volume:
+      required: false
+      example: 100
+      selector:
+        number:
+          min: 0
+          max: 500
+          step: 1
+          mode: box
+    device:
+      required: false
+      example: alsa_output.usb-headset.analog-stereo
+      selector:
+        text:
+    target_peer_id:
+      required: false
+      example: 5f0c2b1e-8a4d-4c1e-9b7a-2d3e4f5a6b7c
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: switchboard
