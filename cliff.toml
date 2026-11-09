@@ -1,9 +1,12 @@
 # git-cliff configuration.
 #
-# Reproduces the go-semantic-release "changelog-generator-default" format 1:1 so
-# the release notes / CHANGELOG match the main Switchboard repo:
+# Reproduces the go-semantic-release "changelog-generator-default" format of the
+# main Switchboard repo, EXCEPT the heading: these notes are only ever shown under
+# a heading that already names the version (the GitHub Release title, and HACS's
+# own "# <tag>" line in the update dialog), so the body carries just the date —
+# repeating the version there printed it three times in HA (user, 2026-11-09):
 #
-#   ## <version> (YYYY-MM-DD)
+#   _Released YYYY-MM-DD_
 #
 #   #### Breaking Changes
 #
@@ -28,7 +31,7 @@
 header = ""
 body = """
 {%- if version -%}
-## {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
+_Released {{ timestamp | date(format="%Y-%m-%d") }}_
 {% else -%}
 ## Unreleased
 {% endif -%}

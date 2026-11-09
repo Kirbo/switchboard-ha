@@ -70,7 +70,9 @@ git tag "$TAG"
 # Push the bump + tag. A GITHUB_TOKEN push triggers no workflow (plus [skip ci]) — no release loop.
 git push origin "HEAD:${GITHUB_REF_NAME:-main}" "$TAG"
 
-gh release create "$TAG" --title "$VERSION" --notes-file UNRELEASED-CHANGELOG.md
+# Title = the tag itself: HACS heads each release's notes with "# <tag>" and appends " - <title>"
+# only when the title differs, so a bare-version title printed the version twice.
+gh release create "$TAG" --title "$TAG" --notes-file UNRELEASED-CHANGELOG.md
 
 emit releasable true
 emit version "$VERSION"
