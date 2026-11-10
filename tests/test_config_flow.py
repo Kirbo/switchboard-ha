@@ -62,7 +62,7 @@ async def test_a_connection_with_no_way_to_authenticate_tls_is_refused():
     """SB-A-061: verify_ssl off AND no fingerprint means aiohttp gets ssl=False, so anything that
     can ARP-spoof the segment reads the bearer token off the first request. That was the default."""
     flow = SwitchboardConfigFlow()
-    base = {"host": "192.168.1.50", "port": 38474, CONF_TOKEN: "t"}
+    base = {"host": "192.0.2.50", "port": 38474, CONF_TOKEN: "t"}
 
     assert (
         await flow._async_validate({**base, CONF_VERIFY_SSL: False, CONF_FINGERPRINT: ""})
@@ -101,9 +101,9 @@ async def test_reconfigure_saves_when_host_and_port_are_unchanged(hass):
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
-        unique_id="192.168.1.56:38474",
+        unique_id="192.0.2.56:38474",
         data={
-            CONF_HOST: "192.168.1.56",
+            CONF_HOST: "192.0.2.56",
             CONF_PORT: 38474,
             CONF_TOKEN: "old-token",
             CONF_VERIFY_SSL: False,
@@ -129,7 +129,7 @@ async def test_reconfigure_saves_when_host_and_port_are_unchanged(hass):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
-                CONF_HOST: "192.168.1.56",
+                CONF_HOST: "192.0.2.56",
                 CONF_PORT: 38474,
                 CONF_TOKEN: "new-token",
                 CONF_VERIFY_SSL: False,
@@ -151,9 +151,9 @@ async def test_options_flow_defaults_chat_text_off_and_persists_the_choice(hass)
     what the user picks. The coordinator reads `entry.options` live, so no reload is asserted."""
     entry = MockConfigEntry(
         domain=DOMAIN,
-        unique_id="192.168.1.56:38474",
+        unique_id="192.0.2.56:38474",
         data={
-            CONF_HOST: "192.168.1.56",
+            CONF_HOST: "192.0.2.56",
             CONF_PORT: 38474,
             CONF_TOKEN: "token",
             CONF_VERIFY_SSL: False,

@@ -447,7 +447,7 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "source": "OpenDeck",
         "action_type": "twitch_go_live",
         "target": CID,
-        "error": "twitch_go_live: refusing to send the stream key to OBS at 192.168.1.56",
+        "error": "twitch_go_live: refusing to send the stream key to OBS at 192.0.2.56",
     },
     {"type": "opendeck_event", "source": "opendeck", "fields": [["button", "scene_1"]]},
     {"type": "navigate_to_view", "view": "settings", "anchor": "gpu", "source": "OpenDeck"},
