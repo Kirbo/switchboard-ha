@@ -144,16 +144,66 @@ async def test_chat_text_reaches_the_bus_with_the_option_on(hass: HomeAssistant)
     assert seen[0]["text"] == "hello chat"
 
 
-async def test_chat_redaction_does_not_touch_other_events(hass: HomeAssistant) -> None:
-    """Only the chat event is redacted here; `twitch_chat_command` and the rest stay verbatim
+COMMAND_FRAME: dict[str, Any] = next(
+    f for f in DOCUMENTED_EVENTS if f["type"] == "twitch_chat_command"
+)
+
+
+async def _command_bus_frames(
+    hass: HomeAssistant, coord: SwitchboardCoordinator
+) -> list[dict[str, Any]]:
+    seen: list[dict[str, Any]] = []
+    hass.bus.async_listen(EVENT_SWITCHBOARD, lambda e: seen.append(dict(e.data)))
+    coord._handle_frame(dict(COMMAND_FRAME))
+    await hass.async_block_till_done()
+    return seen
+
+
+async def test_chat_command_viewer_and_text_are_stripped_from_the_bus_by_default(
+    hass: HomeAssistant,
+) -> None:
+    """SB-00448: a chat command is a chat line — the recorder would archive who typed it and the
+    words after the command just like `twitch_chat_message`. `login`, `name` and `args` go; the
+    command itself and the badge flags stay, so "someone ran !so" / "a mod ran !so" still
+    triggers."""
+    assert COMMAND_FRAME["login"] and COMMAND_FRAME["name"] and COMMAND_FRAME["args"], (
+        "the fixture must carry the fields this test proves are removed"
+    )
+    seen = await _command_bus_frames(hass, make_coordinator(hass))
+    assert seen == [{**COMMAND_FRAME, "login": None, "name": None, "args": None}]
+    assert seen[0]["command"] == "!so"
+    assert seen[0]["is_mod"] is True
+
+
+async def test_chat_command_reaches_the_bus_whole_with_the_option_on(
+    hass: HomeAssistant,
+) -> None:
+    seen = await _command_bus_frames(hass, make_coordinator(hass, {CONF_MIRROR_CHAT_TEXT: True}))
+    assert seen == [COMMAND_FRAME]
+
+
+async def test_chat_command_redaction_leaves_the_coordinator_frame_alone(
+    hass: HomeAssistant,
+) -> None:
+    """The redacted copy is what goes on the bus; the frame the coordinator applies is not
+    mutated (the redaction builds a new dict)."""
+    frame = dict(COMMAND_FRAME)
+    coord = make_coordinator(hass)
+    coord._handle_frame(frame)
+    await hass.async_block_till_done()
+    assert frame == COMMAND_FRAME
+
+
+async def test_redaction_does_not_touch_other_events(hass: HomeAssistant) -> None:
+    """Only chat lines, chat commands and moderation are redacted here; the rest stay verbatim
     (they are scope-gated by the app, and they are what the README documents as recorded)."""
     coord = make_coordinator(hass)
     seen: list[dict[str, Any]] = []
     hass.bus.async_listen(EVENT_SWITCHBOARD, lambda e: seen.append(dict(e.data)))
-    command = next(f for f in DOCUMENTED_EVENTS if f["type"] == "twitch_chat_command")
-    coord._handle_frame(dict(command))
+    event = next(f for f in DOCUMENTED_EVENTS if f["type"] == "twitch_event")
+    coord._handle_frame(dict(event))
     await hass.async_block_till_done()
-    assert seen == [command]
+    assert seen == [event]
 
 
 MODERATION_FRAME: dict[str, Any] = {

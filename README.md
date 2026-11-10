@@ -366,7 +366,7 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 
 | Option | Default | Notes |
 |---|---|---|
-| **Mirror chat text onto the event bus** | off | With it off, `twitch_chat_message` still reaches the HA bus for every chat line — so chat can be counted — but with `author` and `text` set to `null`. Turn it on to receive the names and the words (they still need the `read_events_sensitive` scope and the app's `full` chat-detail setting). |
+| **Mirror chat text onto the event bus** | off | With it off, `twitch_chat_message` still reaches the HA bus for every chat line — so chat can be counted — but with `author` and `text` set to `null`, and `twitch_chat_command` still reaches it for every command — so an automation can react to `!lights` — but with `login`, `name` and `args` set to `null` (`command` and the `is_broadcaster` / `is_mod` / `is_sub` flags stay). Turn it on to receive the names and the words (chat lines still need the `read_events_sensitive` scope and the app's `full` chat-detail setting; chat commands need the scope). |
 | **Mirror moderated viewers onto the event bus** | off | With it off, `twitch_moderation` still reaches the HA bus with the action and outcome, but with `target_login`, `target_user_id`, `reason` and `error` set to `null`. Turn it on to receive who was moderated (still needs the `read_events_sensitive` scope). |
 | **Fire replayed events up to this age (seconds)** | 60 | After a dropped connection, Switchboard replays the events Home Assistant missed (see *Staying connected* below). Every replayed event updates the entities, but one older than this is **not** fired as a `switchboard_event`, so an automation never reacts minutes after the fact. `0` = never fire a replayed event. |
 | **Allow non-admin Home Assistant users to call Switchboard services** | off | With it off, only Home Assistant **administrators** can call the `switchboard.*` services; a non-admin user gets *Unauthorized*. Automations and other calls with no user behind them always run. See the security note below. |
@@ -374,9 +374,10 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 > **Why off by default.** Home Assistant's recorder stores every custom event that isn't excluded
 > (`events` / `event_data`, kept for `purge_keep_days`, 10 by default). Re-firing chat verbatim would
 > build a per-line archive of who said what on your HA box — the archive Switchboard itself refuses
-> to write to its own log under any setting. The same is true of everything else this integration
-> re-fires: `twitch_chat_command`, the resub/cheer messages inside `twitch_event`, `rule_fired`
-> values. If you want *nothing* from Switchboard archived, exclude the event type in your
+> to write to its own log under any setting. Chat commands are chat lines too, so the same option
+> strips who typed them and what followed the command. Everything else this integration re-fires
+> **is** stored as it arrives: the follower / subscriber / cheerer names and the resub/cheer
+> messages inside `twitch_event`, `rule_fired` values. If you want *nothing* from Switchboard archived, exclude the event type in your
 > `configuration.yaml` — automations still trigger on it, only the recorder ignores it:
 >
 > ```yaml

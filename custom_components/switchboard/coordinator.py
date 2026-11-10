@@ -1014,13 +1014,14 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
     def _bus_frame(self, frame: dict[str, Any]) -> dict[str, Any]:
         """What actually goes on the HA bus for one frame.
 
-        `twitch_chat_message` and `twitch_moderation` are redacted HERE, not by the app: HA's
-        recorder stores every non-excluded custom event (`events` / `event_data`, kept for
-        `purge_keep_days`), so re-firing them verbatim builds a per-line archive on the HA box of
-        who said what, and of which viewer was moderated and why — records the app refuses to
-        write to its own log (SB-D-022, SB-00060). The frames still fire (chat with
-        `author`/`text` as null, the contract's own redacted shape; moderation with the viewer
-        fields null) so they can be counted and reacted to; the `mirror_chat_text` and
+        `twitch_chat_message`, `twitch_chat_command` and `twitch_moderation` are redacted HERE,
+        not by the app: HA's recorder stores every non-excluded custom event (`events` /
+        `event_data`, kept for `purge_keep_days`), so re-firing them verbatim builds a per-line
+        archive on the HA box of who said what, and of which viewer was moderated and why —
+        records the app refuses to write to its own log (SB-D-022, SB-00060, SB-00448). The
+        frames still fire (chat with `author`/`text` as null, the contract's own redacted shape;
+        a chat command with `login`/`name`/`args` null; moderation with the viewer fields null)
+        so they can be counted and reacted to; the `mirror_chat_text` and
         `mirror_moderation_targets` options opt back in.
         """
         etype = frame.get("type")
@@ -1028,6 +1029,13 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             if self.entry.options.get(CONF_MIRROR_CHAT_TEXT, False):
                 return frame
             return {**frame, "author": None, "text": None}
+        if etype == "twitch_chat_command":
+            # A chat command is a chat line too (the app keeps both off its log file): who typed
+            # it and what followed the command go, under the same option as chat text. `command`
+            # and the badge flags stay, so "someone ran !x" / "a mod ran !x" still triggers.
+            if self.entry.options.get(CONF_MIRROR_CHAT_TEXT, False):
+                return frame
+            return {**frame, "login": None, "name": None, "args": None}
         if etype == "twitch_moderation":
             # Same recorder reasoning for the moderated viewer: the action and outcome stay, the
             # login / user id / reason / error text naming them go, unless the user opts in.

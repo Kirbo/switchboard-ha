@@ -57,9 +57,11 @@ STEP_USER_SCHEMA = vol.Schema(
 STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_TOKEN): _TOKEN_SELECTOR})
 
 # Options. `mirror_chat_text` defaults OFF (SB-D-022): with it off, `twitch_chat_message` reaches
-# the HA bus with `author`/`text` nulled so the recorder never archives chat lines; the event still
-# fires so chat can be counted. See `coordinator._bus_frame`. `allow_non_admin_services` defaults
-# OFF (SB-00231): the switchboard.* services are admin-only unless it is on — see `services.py`.
+# the HA bus with `author`/`text` nulled, and `twitch_chat_command` with `login`/`name`/`args`
+# nulled (SB-00448), so the recorder never archives who said what; the events still fire so chat
+# can be counted and commands reacted to. See `coordinator._bus_frame`.
+# `allow_non_admin_services` defaults OFF (SB-00231): the switchboard.* services are admin-only
+# unless it is on — see `services.py`.
 # `late_event_max_age` (seconds, default 60): a replayed event older than this updates the entities
 # but is not fired on the bus — see `coordinator._is_late`.
 STEP_OPTIONS_SCHEMA = vol.Schema(
