@@ -57,7 +57,13 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "peer_id": None,
     },
     {"type": "home_assistant_connection", "connection_id": CID, "connected": False},
-    {"type": "home_assistant_reconnecting", "connection_id": CID, "error": "cert mismatch"},
+    # `error` is a scrubbed, short display text (2026-11-12): placeholders for URLs, hosts and
+    # token-shaped words, at most 160 characters. Nothing parses it.
+    {
+        "type": "home_assistant_reconnecting",
+        "connection_id": CID,
+        "error": "error sending request for url (<url>): <host> refused",
+    },
     {
         "type": "home_assistant_state_changed",
         "connection_id": CID,
@@ -91,6 +97,16 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "step": "wake_display",
         "outcome": "stuck",
         "render_lag_pct": 14.2,
+    },
+    # 2026-11-12: a machine with no display to wake goes from a failed `reapply` straight to
+    # `stuck`, which then names `reapply`.
+    {
+        "type": "obs_capture_repair",
+        "connection_id": CID,
+        "input": "macOS Screen Capture",
+        "step": "reapply",
+        "outcome": "stuck",
+        "render_lag_pct": 31.0,
     },
     {
         "type": "action_skipped",
@@ -423,6 +439,28 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "peer_id": CID,
         "peer_name": "Gaming",
         "reason": "peer_removed",
+    },
+    # 2026-11-12: actions that leave the queue together are ONE event carrying their `count`
+    # (present only above one; the ids then name the first of them), and `reason` gained the
+    # code `queue_full` (at most 100 actions wait for one peer).
+    {
+        "type": "rule_action_failed",
+        "rule_id": CID,
+        "rule_name": "Delay on",
+        "action_type": "obs_delay_set",
+        "peer_id": CID,
+        "peer_name": "Gaming",
+        "reason": "peer_removed",
+        "count": 7,
+    },
+    {
+        "type": "rule_action_failed",
+        "rule_id": CID,
+        "rule_name": "Delay on",
+        "action_type": "obs_delay_set",
+        "peer_id": CID,
+        "peer_name": "Gaming",
+        "reason": "queue_full",
     },
     # `value` populated: what a consumer HOLDING `read_events_sensitive` sees when the rule
     # rendered it from a sensitive trigger. Without the scope the same frame arrives with

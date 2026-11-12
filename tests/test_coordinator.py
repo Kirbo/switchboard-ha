@@ -666,6 +666,76 @@ async def test_the_streams_end_clears_capture_stuck_but_a_restart_does_not(
     assert inst["capture_stuck"] is False
 
 
+async def test_obs_disconnecting_clears_capture_stuck(hass: HomeAssistant) -> None:
+    """OBS disconnecting closes a capture incident with no `recovered` (docs/HA.md, 2026-11-12):
+    an offline OBS is never stuck. Reconnecting does not bring the flag back, and a
+    `connected: true` leaves a standing flag alone."""
+    coord = make_coordinator(hass)
+    inst = coord.data.obs[CID]
+    connection = {"type": "obs_connection", "connection_id": CID}
+    assert coord._apply(_capture_repair("stuck"))
+    assert coord._apply({**connection, "connected": True})
+    assert inst["capture_stuck"] is True
+    assert coord._apply({**connection, "connected": False})
+    assert inst["connected"] is False
+    assert inst["capture_stuck"] is False
+    assert coord._apply({**connection, "connected": True})
+    assert inst["capture_stuck"] is False
+
+
+async def test_a_stuck_capture_is_flagged_whichever_step_it_names(hass: HomeAssistant) -> None:
+    """`stuck` may name `reapply` (a machine with no display to wake, docs/HA.md 2026-11-12) —
+    or a step this version does not know: the flag follows `outcome` alone."""
+    coord = make_coordinator(hass)
+    inst = coord.data.obs[CID]
+    for step in ("reapply", "wake_display", "something_new", None):
+        inst["capture_stuck"] = False
+        assert coord._apply({**_capture_repair("stuck"), "step": step}) is True
+        assert inst["capture_stuck"] is True
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"reason": "queue_full"},
+        {"reason": "queue_full", "count": 12},
+        {"reason": "peer_removed", "count": 3},
+    ],
+    ids=["queue_full", "queue_full_counted", "peer_removed_counted"],
+)
+async def test_a_counted_rule_action_failed_reaches_the_bus_whole(
+    hass: HomeAssistant, extra: dict[str, Any]
+) -> None:
+    """`rule_action_failed` may stand for several actions (`count`, present only above one) and
+    carry the code `queue_full` (docs/HA.md, 2026-11-12): the frame is re-fired as it came —
+    `count` and the code included — and changes no entity state."""
+    coord = make_coordinator(hass)
+    frame = {
+        "type": "rule_action_failed",
+        "rule_id": "r1",
+        "rule_name": "Delay on",
+        "action_type": "obs_delay_set",
+        "peer_id": CID,
+        "peer_name": "Studio",
+        **extra,
+    }
+    assert coord._bus_frame(frame) == frame
+    assert coord._apply(frame) is False
+
+
+async def test_the_reconnecting_reason_is_passed_on_unread(hass: HomeAssistant) -> None:
+    """`home_assistant_reconnecting.error` is a short display text (docs/HA.md: "Do not parse
+    it") — scrubbed placeholders, any wording, even absent: re-fired as it came, no state."""
+    coord = make_coordinator(hass)
+    for error in ("connection refused (<host>)", "<url>: <redacted>", "", None):
+        frame = {"type": "home_assistant_reconnecting", "connection_id": CID, "error": error}
+        assert coord._bus_frame(frame) == frame
+        assert coord._apply(frame) is False
+    bare = {"type": "home_assistant_reconnecting", "connection_id": CID}
+    assert coord._bus_frame(bare) == bare
+    assert coord._apply(bare) is False
+
+
 def test_a_snapshot_without_capture_stuck_reads_false() -> None:
     """An app that predates the field omits it: absent means not stuck."""
     older = {**API_STATE, "obs": [{"id": CID, "label": "Home OBS", "connected": True}]}

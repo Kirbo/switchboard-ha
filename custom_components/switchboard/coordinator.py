@@ -109,7 +109,7 @@ _OBS_EVENTS = (
 _RENDERED_TEXT_FIELDS = ("value", "text", "error", "reason", "label")
 
 # `discord_voice_channel_changed.call_kind` values whose "channel name" is the people in the call.
-_PRIVATE_CALL_KINDS = ("dm", "group_dm")
+PRIVATE_CALL_KINDS = ("dm", "group_dm")
 
 # Events carrying a full NowPlaying payload for a track/context change.
 _SPOTIFY_TRACK_EVENTS = (
@@ -432,7 +432,7 @@ def _without_call_partner(frame: dict[str, Any]) -> dict[str, Any]:
     channel keeps its name, and so does the channel a plain leave names. Ids, `call_kind` and the
     guild stay, so "joined a call" still triggers. Returns the frame itself when nothing changes.
     """
-    private = frame.get("call_kind") in _PRIVATE_CALL_KINDS
+    private = frame.get("call_kind") in PRIVATE_CALL_KINDS
     moved = frame.get("channel_id") is not None and frame.get("previous_channel_id") is not None
     redacted = dict(frame)
     if private and redacted.get("channel_name") is not None:
@@ -1131,6 +1131,11 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 self.schedule_afk_refresh()
             elif etype == "obs_connection":
                 inst["connected"] = bool(frame.get("connected"))
+                if not inst["connected"]:
+                    # OBS disconnecting closes a capture incident with no `recovered`, like the
+                    # stream's end below (docs/HA.md `obs_capture_repair`, 2026-11-12): an OBS
+                    # that is offline is never `capture_stuck`.
+                    inst["capture_stuck"] = False
             elif etype == "obs_stream_state":
                 active = bool(frame.get("active"))
                 # `restart: true` (app 2026-10-18, docs/HA.md field notes): this state belongs to
@@ -1167,7 +1172,9 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
             elif etype == "obs_capture_repair":
                 # The hidden screen capture's repair chain (docs/HA.md): `stuck` once every step
                 # failed, `recovered` once it renders again. The per-step `fixed` / `failed`
-                # outcomes — and any the app adds later — are for the bus only.
+                # outcomes — and any the app adds later — are for the bus only. `step` is never
+                # read: a `stuck` names whichever step was the last one tried (`wake_display`,
+                # or `reapply` on a machine with no display to wake).
                 outcome = frame.get("outcome")
                 if outcome not in ("stuck", "recovered"):
                     return False
