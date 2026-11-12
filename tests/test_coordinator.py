@@ -596,6 +596,82 @@ async def test_a_restart_started_with_no_known_anchor_derives_one(hass: HomeAssi
     assert isinstance(inst["stream_started_ms"], int)
 
 
+async def test_a_403_is_logged_once_with_both_things_to_check(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A 403 means the Events ACL refused this address or the token lacks the read scope: the
+    one warning per outage names both, and the retry ladder does not repeat it."""
+    coord = make_coordinator(hass)
+    with caplog.at_level("WARNING", logger=coord_mod.__name__):
+        coord._log_access_denied()
+        coord._log_access_denied()
+    warnings = [r.getMessage() for r in caplog.records if "access denied (403)" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "Events ACL" in warnings[0]
+    assert "Read rig state" in warnings[0]
+
+
+def _capture_repair(outcome: str, cid: str = CID) -> dict[str, Any]:
+    return {
+        "type": "obs_capture_repair",
+        "connection_id": cid,
+        "input": "macOS Screen Capture",
+        "step": "wake_display",
+        "outcome": outcome,
+        "render_lag_pct": 14.2,
+    }
+
+
+async def test_capture_repair_keeps_the_instance_flag(hass: HomeAssistant) -> None:
+    """`obs_capture_repair` (docs/HA.md): `stuck` sets the per-instance `capture_stuck`,
+    `recovered` clears it; a step's `fixed` / `failed` — or an outcome this version does not
+    know — changes no state, whichever way the flag stands."""
+    coord = make_coordinator(hass)
+    inst = coord.data.obs[CID]
+    inst["capture_stuck"] = False
+    for outcome in ("fixed", "failed", "something_new"):
+        assert coord._apply(_capture_repair(outcome)) is False
+        assert inst["capture_stuck"] is False
+    assert coord._apply(_capture_repair("stuck")) is True
+    assert inst["capture_stuck"] is True
+    for outcome in ("fixed", "failed", "something_new"):
+        assert coord._apply(_capture_repair(outcome)) is False
+        assert inst["capture_stuck"] is True
+    assert coord._apply(_capture_repair("recovered")) is True
+    assert inst["capture_stuck"] is False
+
+
+async def test_capture_repair_for_an_unknown_instance_changes_nothing(
+    hass: HomeAssistant,
+) -> None:
+    coord = make_coordinator(hass)
+    before = dict(coord.data.obs[CID])
+    coord._apply(_capture_repair("stuck", cid="99999999-9999-9999-9999-999999999999"))
+    assert coord.data.obs[CID] == before
+    assert list(coord.data.obs) == [CID]
+
+
+async def test_the_streams_end_clears_capture_stuck_but_a_restart_does_not(
+    hass: HomeAssistant,
+) -> None:
+    """The stream's end closes a capture incident with no `recovered`; the `stopped` of an
+    automatic restart the app runs is not the stream's end."""
+    coord = make_coordinator(hass)
+    inst = coord.data.obs[CID]
+    assert coord._apply(_capture_repair("stuck"))
+    stopped = {"type": "obs_stream_state", "connection_id": CID, "active": False}
+    assert coord._apply({**stopped, "state": "stopped", "restart": True})
+    assert inst["capture_stuck"] is True
+    assert coord._apply({**stopped, "state": "stopped"})
+    assert inst["capture_stuck"] is False
+
+
+def test_a_snapshot_without_capture_stuck_reads_false() -> None:
+    """An app that predates the field omits it: absent means not stuck."""
+    older = {**API_STATE, "obs": [{"id": CID, "label": "Home OBS", "connected": True}]}
+    assert _state_from_snapshot(older).obs[CID]["capture_stuck"] is False
+
+
 async def test_obs_frozen_flips_the_instance_flag(hass: HomeAssistant) -> None:
     """`obs_frozen` (app 2026-10-17) keeps the per-instance `frozen` flag — the Frozen problem
     sensor — in step with the app, both ways."""

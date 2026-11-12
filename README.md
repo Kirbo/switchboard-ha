@@ -16,7 +16,7 @@ entities, and lets HA drive Switchboard actions through services.
 
 **Entities** (one device per OBS / Twitch connection, plus a Switchboard service device):
 
-- **Binary sensors** — per OBS connection: `Connected`, `Streaming`, `Recording`, `Frozen` (a problem sensor: OBS itself stopped rendering or answering — restart OBS); per Twitch
+- **Binary sensors** — per OBS connection: `Connected`, `Streaming`, `Recording`, `Frozen` (a problem sensor: OBS itself stopped rendering or answering — restart OBS), `Capture stuck` (a problem sensor, Switchboard 2026-11-12 or newer: the hidden screen capture of a headless machine's OBS is dead and Switchboard's own repair gave up — pick the display again in the capture source's Properties; off again once it renders or the stream ends); per Twitch
   connection: `Live`; global: `AFK` (attributes: `threshold_secs` — how long idle before the
   idle→AFK automation fires, with any per-scene override applied, `null` = never — and
   `snooze_until`), `Input overlays visible` (the keyboard/mouse/gamepad overlays are shown on
@@ -467,7 +467,8 @@ waking, a network flap, or Home Assistant restarting — nothing to reload.
   budget refills continuously, so the client waits and re-sends (up to four attempts over ~1.75 s)
   before the service call fails, and the events websocket and entities are untouched either way.
   Nothing driven at human pace will ever see it; a script looping over a dozen actions might, and
-  should space them out.
+  should space them out. Reads have a separate budget (20 per second, burst 60): the integration
+  reads only when it (re)connects, and a `429` on a read is waited out the same way.
 - The API event/command schema is **additive**: new event types and fields appear over time and are
   ignored if unknown. New OBS/Twitch connections added (or renamed) in Switchboard trigger a reload
   so their entities and device names follow.

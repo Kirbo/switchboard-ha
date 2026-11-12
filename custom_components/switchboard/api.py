@@ -34,8 +34,22 @@ class SwitchboardAuthError(SwitchboardApiError):
 
 
 class SwitchboardAccessError(SwitchboardApiError):
-    """The token is valid but this caller is denied by an ACL (HTTP 403) —
-    check the Events/Control ACLs under Settings → External API."""
+    """The token is valid but the app refuses this call (HTTP 403): the caller's address is
+    outside the Events/Control ACL, or a paired-plugin token lacks the scope the call needs —
+    both under Settings → External API. The message is the app's own answer when it gave one."""
+
+
+async def _refusal(resp: aiohttp.ClientResponse) -> str:
+    """Why the app answered 403, in its own words (`plugin lacks 'obs_control' scope`, …) — one
+    short line of plain text per docs/HA.md. A body that is missing, unreadable or not a short
+    line falls back to naming both causes."""
+    try:
+        text = (await resp.text()).strip()
+    except (aiohttp.ClientError, UnicodeDecodeError):
+        text = ""
+    if text and len(text) <= 200 and "\n" not in text:
+        return text
+    return "denied by the External API ACL or a missing plugin scope"
 
 
 class SwitchboardRateLimitError(SwitchboardApiError):
@@ -145,7 +159,7 @@ class SwitchboardClient:
                 if resp.status == 401:
                     raise SwitchboardAuthError("invalid or missing API token")
                 if resp.status == 403:
-                    raise SwitchboardAccessError("denied by the External API ACL")
+                    raise SwitchboardAccessError(await _refusal(resp))
                 if resp.status == 429:
                     raise SwitchboardRateLimitError(f"GET {path} -> HTTP 429 (rate limited)")
                 if resp.status != 200:
@@ -155,9 +169,11 @@ class SwitchboardClient:
             raise SwitchboardApiError(f"GET {path} failed: {err}") from err
 
     async def _get(self, path: str) -> Any:
-        # Reads are not budgeted today (the budget covers writes), but a 429 here would otherwise
-        # tear down the events websocket and mark every entity unavailable — a throttle must never
-        # read as an outage, so it goes through the same wait-and-re-send path as a write.
+        # Reads have a budget of their own (docs/HA.md "Read budget": 20/s, burst 60, per
+        # caller). A resync is a handful of reads, so it is not met at display rate — but a 429
+        # here would otherwise tear down the events websocket and mark every entity unavailable.
+        # A throttle must never read as an outage, so it goes through the same wait-and-re-send
+        # path as a write.
         return await self._retrying(lambda: self._get_once(path))
 
     async def fetch_state(self) -> dict[str, Any]:
@@ -201,7 +217,7 @@ class SwitchboardClient:
                 if resp.status == 401:
                     raise SwitchboardAuthError("invalid or missing API token")
                 if resp.status == 403:
-                    raise SwitchboardAccessError("denied by the External API ACL")
+                    raise SwitchboardAccessError(await _refusal(resp))
                 if resp.status == 429:
                     raise SwitchboardRateLimitError("write budget spent — the command was not run")
                 if resp.status != 200:

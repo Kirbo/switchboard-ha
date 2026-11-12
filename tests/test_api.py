@@ -18,6 +18,7 @@ import pytest
 
 from custom_components.switchboard import api as api_mod
 from custom_components.switchboard.api import (
+    SwitchboardAccessError,
     SwitchboardApiError,
     SwitchboardAuthError,
     SwitchboardClient,
@@ -111,6 +112,31 @@ async def test_a_rate_limit_is_still_an_api_error() -> None:
     the transient failure it is, so no caller had to be taught about the new class."""
     assert issubclass(SwitchboardRateLimitError, SwitchboardApiError)
     assert not issubclass(SwitchboardRateLimitError, SwitchboardAuthError)
+
+
+@pytest.mark.parametrize("call", ["read", "command"])
+async def test_a_403_carries_the_apps_own_answer_and_is_not_retried(call: str) -> None:
+    """docs/HA.md: a 403 is a short plain-text line saying why (`plugin lacks '<scope>' scope`).
+    The error carries it, so a service call's message and the log name the scope to grant."""
+    session = FakeSession([_Resp(403, text="plugin lacks 'obs_control' scope\n")])
+    client = _client(session)
+    with pytest.raises(SwitchboardAccessError) as err:
+        if call == "read":
+            await client.fetch_state()
+        else:
+            await client.send_command({"action_type": "obs_scene_set"})
+    assert str(err.value) == "plugin lacks 'obs_control' scope"
+    assert session.calls == 1
+
+
+@pytest.mark.parametrize("body", ["", "   ", "x" * 201, "<html>\n<body>denied</body>\n</html>"])
+async def test_a_403_without_a_short_answer_names_both_causes(body: str) -> None:
+    """No body, or one that is not the app's one-line answer (a proxy's error page): the message
+    falls back to the two things a 403 can mean, and never quotes the page."""
+    session = FakeSession([_Resp(403, text=body)])
+    with pytest.raises(SwitchboardAccessError) as err:
+        await _client(session).fetch_state()
+    assert str(err.value) == "denied by the External API ACL or a missing plugin scope"
 
 
 async def test_a_rejected_token_is_not_retried() -> None:

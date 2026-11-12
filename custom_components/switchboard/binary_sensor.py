@@ -1,5 +1,5 @@
-"""Binary sensors: per-OBS connected/streaming/recording/frozen, a global AFK sensor, and the
-local Discord client's muted / deafened / in-voice flags."""
+"""Binary sensors: per-OBS connected/streaming/recording/frozen/capture-stuck, a global AFK
+sensor, and the local Discord client's muted / deafened / in-voice flags."""
 
 from __future__ import annotations
 
@@ -34,6 +34,9 @@ _OBS_FLAGS = (
     # OBS itself froze (render loop stopped / never answers) — on = a problem only an OBS
     # restart fixes; the one to notify your phone on.
     ("frozen", "Frozen", BinarySensorDeviceClass.PROBLEM),
+    # The hidden screen capture of a headless machine's OBS is dead and the app's own repair
+    # gave up — on = someone has to pick the display again in the capture source's Properties.
+    ("capture_stuck", "Capture stuck", BinarySensorDeviceClass.PROBLEM),
 )
 
 
@@ -145,7 +148,8 @@ class DiscordInVoiceSensor(SwitchboardDiscordVoiceEntity, BinarySensorEntity):
 
 
 class ObsFlagSensor(SwitchboardObsEntity, BinarySensorEntity):
-    """A boolean flag (connected/streaming/recording/frozen) of one OBS instance."""
+    """A boolean flag (connected/streaming/recording/frozen/capture_stuck) of one OBS
+    instance."""
 
     def __init__(self, coordinator, entry, connection_id, key, name, device_class) -> None:
         super().__init__(coordinator, entry, connection_id)

@@ -57,6 +57,10 @@ async def test_entities_are_created_from_the_snapshot(hass: HomeAssistant) -> No
     assert hass.states.get(f"binary_sensor.{obs}_connected").state == "on"
     assert hass.states.get(f"binary_sensor.{obs}_streaming").state == "on"
     assert hass.states.get(f"binary_sensor.{obs}_recording").state == "off"
+    assert hass.states.get(f"binary_sensor.{obs}_frozen").state == "off"
+    stuck = hass.states.get(f"binary_sensor.{obs}_capture_stuck")
+    assert stuck.state == "on"
+    assert stuck.attributes["device_class"] == "problem"
     assert hass.states.get(f"sensor.{obs}_stream_delay").state == "20"
     assert hass.states.get(f"sensor.{obs}_stream_started").state == "2023-11-14T22:13:20+00:00"
 

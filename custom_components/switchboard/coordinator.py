@@ -101,6 +101,7 @@ _OBS_EVENTS = (
     "obs_delay_changed",
     "stream_delay_changed",
     "obs_frozen",
+    "obs_capture_repair",
 )
 
 # Where a `"sensitive": true` frame carries the text an automation rendered from its trigger
@@ -454,6 +455,9 @@ def _obs_from_snapshot(o: dict[str, Any]) -> dict[str, Any]:
         "stream_delay_secs": o.get("stream_delay_secs"),
         # OBS itself is frozen (app 2026-10-17, additive; absent from older apps → False).
         "frozen": o.get("frozen", False),
+        # Its hidden screen capture is dead and the app's repair gave up (app 2026-11-12,
+        # additive; absent from older apps → False). Kept live by `obs_capture_repair`.
+        "capture_stuck": o.get("capture_stuck", False),
         "scenes": [],
     }
 
@@ -939,14 +943,18 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         self.entry.async_start_reauth(self.hass)
 
     def _log_access_denied(self) -> None:
-        """403: the token is valid but this caller is denied by an ACL. Warn once per outage —
-        the retry loop would otherwise repeat it every backoff step."""
+        """403: the token is valid but the app refuses this caller — its address is outside the
+        Events ACL, or (a paired-plugin token) it does not hold the `read_state` scope, which
+        admits the events socket and every read (docs/HA.md "Two read scopes"). Warn once per
+        outage — the retry loop would otherwise repeat it every backoff step."""
         if self._access_denied_logged or self._ha_stopping:
             return
         self._access_denied_logged = True
         _LOGGER.warning(
-            "switchboard: access denied (403) — check the Events ACL / allowlist under "
-            "Settings → External API; entities stay unavailable until access is restored"
+            "switchboard: access denied (403) — in Switchboard, check Settings → External API: "
+            "the Events ACL / allowlist must admit Home Assistant, and a paired-plugin token "
+            "needs Read rig state ticked on its card; entities stay unavailable until access is "
+            "restored"
         )
 
     def _fingerprint_issue_id(self) -> str:
@@ -1139,6 +1147,9 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                         inst["stream_started_ms"] = int(time.time() * 1000)
                 elif not active and not restart:
                     inst["stream_started_ms"] = None
+                    # The stream's end closes a capture incident with no `recovered` (docs/HA.md
+                    # `obs_capture_repair`).
+                    inst["capture_stuck"] = False
                 inst["streaming"] = active
             elif etype == "obs_record_state":
                 inst["recording"] = bool(frame.get("active"))
@@ -1153,6 +1164,14 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
                 # OBS itself stopped rendering/answering (or recovered) — only an OBS restart
                 # fixes it; the app stops restarting the stream meanwhile.
                 inst["frozen"] = bool(frame.get("frozen"))
+            elif etype == "obs_capture_repair":
+                # The hidden screen capture's repair chain (docs/HA.md): `stuck` once every step
+                # failed, `recovered` once it renders again. The per-step `fixed` / `failed`
+                # outcomes — and any the app adds later — are for the bus only.
+                outcome = frame.get("outcome")
+                if outcome not in ("stuck", "recovered"):
+                    return False
+                inst["capture_stuck"] = outcome == "stuck"
             return True
 
         if etype == "machine_state_changed":

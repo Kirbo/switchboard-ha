@@ -82,6 +82,16 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
     {"type": "obs_disk_space", "connection_id": CID, "free_mb": 12698, "low": True},
     {"type": "obs_stream_stalled", "connection_id": CID, "seconds": 17, "restarted": True},
     {"type": "obs_frozen", "connection_id": CID, "frozen": True},
+    # 2026-11-11: the hidden screen capture's repair chain. `stuck` / `recovered` move the
+    # instance's `capture_stuck`; a step's `fixed` / `failed` is for the bus only.
+    {
+        "type": "obs_capture_repair",
+        "connection_id": CID,
+        "input": "macOS Screen Capture",
+        "step": "wake_display",
+        "outcome": "stuck",
+        "render_lag_pct": 14.2,
+    },
     {
         "type": "action_skipped",
         "rule_id": "rule-1",
@@ -403,6 +413,17 @@ DOCUMENTED_EVENTS: list[dict[str, Any]] = [
         "peer_name": "Gaming",
         "reason": "expired",
     },
+    # 2026-11-11: `reason` gained the code `peer_removed` (the peer's pairing ended and the
+    # action was dropped undelivered). An open set: no entity reads it.
+    {
+        "type": "rule_action_failed",
+        "rule_id": CID,
+        "rule_name": "Delay on",
+        "action_type": "obs_delay_set",
+        "peer_id": CID,
+        "peer_name": "Gaming",
+        "reason": "peer_removed",
+    },
     # `value` populated: what a consumer HOLDING `read_events_sensitive` sees when the rule
     # rendered it from a sensitive trigger. Without the scope the same frame arrives with
     # `value: ""` (the documented example above) — see `test_redacted_frames_keep_their_shape`.
@@ -575,6 +596,9 @@ API_STATE: dict[str, Any] = {
             "stream_started_ms": 1700000000000,
             "stream_delay_secs": 20,
             "go_live_ok": True,
+            "frozen": False,
+            # 2026-11-12: the hidden screen capture is dead and the repair gave up.
+            "capture_stuck": True,
         }
     ],
     "spotify": "playing",
@@ -722,6 +746,8 @@ def test_api_state_maps_every_documented_field() -> None:
     assert inst["current_scene"] == "Gaming"
     assert inst["stream_started_ms"] == 1700000000000
     assert inst["stream_delay_secs"] == 20
+    assert inst["frozen"] is False
+    assert inst["capture_stuck"] is True
 
     assert data.spotify == "playing"
     assert data.spotify_now is not None
