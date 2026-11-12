@@ -34,7 +34,9 @@ entities, and lets HA drive Switchboard actions through services.
   `Discord muted`, `Discord deafened` and `In Discord voice` — the Discord desktop app on
   Switchboard's machine (attributes while in voice: `call_kind` — `server` / `dm` / `group_dm` —
   and `channel_id`, plus the `channel` and `guild` names only when the token holds Switchboard's
-  `read_events_sensitive` scope; the global token does).
+  `read_events_sensitive` scope; the global token does. A `dm` / `group_dm` call never has a
+  `channel` attribute — that name is the people in the call — so tell a private call from a
+  server channel by `call_kind`).
 - **Sensors** — per OBS connection: current `Scene` (attribute: that instance's `scenes` list),
   `Stream started` (timestamp — derive uptime from it; an automatic restart the app runs keeps
   it) and `Stream delay` (seconds, `0` = off);

@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .coordinator import SwitchboardCoordinator
+from .coordinator import PRIVATE_CALL_KINDS, SwitchboardCoordinator
 from .entity import (
     SwitchboardAlertEntity,
     SwitchboardDiscordVoiceEntity,
@@ -120,6 +120,11 @@ class DiscordInVoiceSensor(SwitchboardDiscordVoiceEntity, BinarySensorEntity):
     (the names) ONLY when the app sent them — it withholds them from a token without
     `read_events_sensitive`, since which channel the streamer is in, and on which server, says who
     they are with. The names are never invented or carried over from an earlier channel.
+
+    A `dm` / `group_dm` call never has a `channel` attribute, whatever the app sent: that "name"
+    is the people in the call, and the recorder keeps state attributes — the same rule the bus
+    frames follow (`coordinator._without_call_partner`). `call_kind` stays, so an automation
+    still tells a private call from a server channel.
     """
 
     _key = "in_voice"
@@ -140,7 +145,7 @@ class DiscordInVoiceSensor(SwitchboardDiscordVoiceEntity, BinarySensorEntity):
             "call_kind": voice.get("call_kind"),
             "channel_id": voice.get("channel_id"),
         }
-        if voice.get("channel_name"):
+        if voice.get("channel_name") and voice.get("call_kind") not in PRIVATE_CALL_KINDS:
             attrs["channel"] = voice["channel_name"]
         if voice.get("guild_name"):
             attrs["guild"] = voice["guild_name"]

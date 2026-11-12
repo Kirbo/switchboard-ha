@@ -7,6 +7,7 @@ from unittest.mock import patch
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.switchboard.const import CONF_FINGERPRINT, DOMAIN
@@ -362,6 +363,41 @@ async def test_an_uncounted_row_is_listed_but_never_raises_the_sensor(hass: Home
     assert state.state == "down"
     assert state.attributes["problems"] == 1
     assert state.attributes["by_integration"]["peer"] == "down"
+
+
+@pytest.mark.parametrize(
+    ("call_kind", "named"),
+    [("server", True), ("dm", False), ("group_dm", False)],
+)
+async def test_in_discord_voice_names_a_server_channel_but_never_a_private_call(
+    hass: HomeAssistant, call_kind: str, named: bool
+) -> None:
+    """The "channel name" of a DM or group call is the people in it, and the recorder keeps
+    state attributes: such a call shows its `call_kind` and `channel_id` but no `channel`, even
+    when the app sent the name. A server channel keeps its name."""
+    entry = await _setup(hass)
+    coord = hass.data[DOMAIN][entry.entry_id]
+    coord._handle_frame(
+        {
+            "type": "discord_voice_channel_changed",
+            "channel_id": "100000000000000009",
+            "channel_name": "Alex, Sam",
+            "guild_id": None,
+            "guild_name": None,
+            "call_kind": call_kind,
+            "previous_channel_id": "100000000000000001",
+            "previous_channel_name": "Stream lounge",
+        }
+    )
+    await hass.async_block_till_done()
+    voice = hass.states.get(IN_DISCORD_VOICE)
+    assert voice.state == "on"
+    assert voice.attributes["call_kind"] == call_kind
+    assert voice.attributes["channel_id"] == "100000000000000009"
+    assert ("channel" in voice.attributes) is named
+    if named:
+        assert voice.attributes["channel"] == "Alex, Sam"
+    assert "Alex, Sam" not in str(voice.attributes) or named
 
 
 DISCORD_MUTED = "binary_sensor.switchboard_test_discord_muted"
