@@ -215,13 +215,18 @@ and fields), including the ones that back no entity: `twitch_event` (follows/sub
 `opendeck_event`, `mesh_identity_reset`, the go-live pair `twitch_go_live` /
 `twitch_stream_target_restored`, and the rest of the contract's event vocabulary.
 
-> **Two of those arrive redacted without `read_events_sensitive`.** `rule_fired.value` and
-> `overlay_alert.text` are rendered from whatever triggered the rule — a viewer's name, a chat
-> message, an HA entity's state — so a token without that scope receives the *same frame* with
-> that one field as an **empty string**. Nothing else changes: same event type, same keys, nothing
-> absent. An automation that puts `event_data.value` into a notification should skip the
-> notification when it is empty rather than send a blank one. With the global token (the
-> recommended one, see below) both arrive populated.
+> **Rendered text can arrive empty or `null`.** Eight events carry text an automation rendered
+> from whatever triggered it — a viewer's name, a chat message, an HA entity's state:
+> `rule_fired.value`, `overlay_alert.text`, `variable_changed.value`, `external_command.value`,
+> `external_command_failed.error`, `rule_action_queued.error`, `rule_action_failed.reason` and
+> `overlay_countdown.label`. A token without `read_events_sensitive` receives the *same frame*
+> with that one field as an **empty string** when the trigger was a sensitive one. A token with
+> the scope (the global token has it) receives the text, and Switchboard 2026-11-12 or newer marks
+> such a frame `sensitive: true`; this integration then fires it with that field set to **`null`**
+> — Home Assistant's recorder would otherwise keep the viewer's name or words — unless the
+> **Mirror chat text** option is on (see Options). Nothing else changes: same event type, same
+> keys. An automation that puts `event_data.value` into a notification should skip the
+> notification when it is empty or `null` rather than send a blank one.
 
 ```yaml
 automation:
@@ -246,7 +251,9 @@ newer, with its Discord voice controls connected):
 - **Events** — `switchboard_event` with `type: discord_voice_channel_changed` (joined, switched or
   left a voice channel or call: `channel_id` — `null` after leaving — `call_kind` = `server` / `dm` /
   `group_dm`, `guild_id`, the `previous_channel_*` left, and the `channel_name` / `guild_name`
-  names only with the `read_events_sensitive` scope, which the global token holds) and
+  names only with the `read_events_sensitive` scope, which the global token holds; a `dm` /
+  `group_dm` call always fires with `channel_name` `null` — that name is the people in the call —
+  and a move from one channel to another without the name of the one left) and
   `type: discord_voice_settings_changed` (`mute`, `deaf`, `input_mode` plus their `previous_*`
   values). The app's first reading after Discord or Switchboard (re)starts is a baseline and fires
   neither event.
@@ -366,7 +373,7 @@ Copy `custom_components/switchboard` into your HA `config/custom_components/` di
 
 | Option | Default | Notes |
 |---|---|---|
-| **Mirror chat text onto the event bus** | off | With it off, `twitch_chat_message` still reaches the HA bus for every chat line — so chat can be counted — but with `author` and `text` set to `null`, and `twitch_chat_command` still reaches it for every command — so an automation can react to `!lights` — but with `login`, `name` and `args` set to `null` (`command` and the `is_broadcaster` / `is_mod` / `is_sub` flags stay). Turn it on to receive the names and the words (chat lines still need the `read_events_sensitive` scope and the app's `full` chat-detail setting; chat commands need the scope). |
+| **Mirror chat text onto the event bus** | off | With it off, `twitch_chat_message` still reaches the HA bus for every chat line — so chat can be counted — but with `author` and `text` set to `null`, and `twitch_chat_command` still reaches it for every command — so an automation can react to `!lights` — but with `login`, `name` and `args` set to `null` (`command` and the `is_broadcaster` / `is_mod` / `is_sub` flags stay). The same option covers text an automation rendered from a viewer's name or words: an event Switchboard marks `sensitive: true` (`rule_fired`, `overlay_alert`, `variable_changed`, `external_command`, `external_command_failed`, `rule_action_queued`, `rule_action_failed`, `overlay_countdown`) reaches the bus with its `value` / `text` / `error` / `reason` / `label` set to `null`. Turn it on to receive the names and the words (chat lines still need the `read_events_sensitive` scope and the app's `full` chat-detail setting; chat commands and rendered text need the scope). |
 | **Mirror moderated viewers onto the event bus** | off | With it off, `twitch_moderation` still reaches the HA bus with the action and outcome, but with `target_login`, `target_user_id`, `reason` and `error` set to `null`. Turn it on to receive who was moderated (still needs the `read_events_sensitive` scope). |
 | **Fire replayed events up to this age (seconds)** | 60 | After a dropped connection, Switchboard replays the events Home Assistant missed (see *Staying connected* below). Every replayed event updates the entities, but one older than this is **not** fired as a `switchboard_event`, so an automation never reacts minutes after the fact. `0` = never fire a replayed event. |
 | **Allow non-admin Home Assistant users to call Switchboard services** | off | With it off, only Home Assistant **administrators** can call the `switchboard.*` services; a non-admin user gets *Unauthorized*. Automations and other calls with no user behind them always run. See the security note below. |

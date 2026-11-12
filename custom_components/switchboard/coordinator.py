@@ -103,6 +103,13 @@ _OBS_EVENTS = (
     "obs_frozen",
 )
 
+# Where a `"sensitive": true` frame carries the text an automation rendered from its trigger
+# (docs/HA.md "Two read scopes": `value` / `text` / `error` / `reason` / `label`).
+_RENDERED_TEXT_FIELDS = ("value", "text", "error", "reason", "label")
+
+# `discord_voice_channel_changed.call_kind` values whose "channel name" is the people in the call.
+_PRIVATE_CALL_KINDS = ("dm", "group_dm")
+
 # Events carrying a full NowPlaying payload for a track/context change.
 _SPOTIFY_TRACK_EVENTS = (
     "spotify_song_changed",
@@ -414,6 +421,24 @@ def _spotify_gate(now: dict[str, Any] | None) -> str:
     if not now:
         return SPOTIFY_STOPPED
     return SPOTIFY_PLAYING if now.get("playing") else SPOTIFY_PAUSED
+
+
+def _without_call_partner(frame: dict[str, Any]) -> dict[str, Any]:
+    """A `discord_voice_channel_changed` frame as it goes on the HA bus — the rule the app's own
+    log file follows. The "channel name" of a DM or group call is the people in it, so a private
+    call fires without `channel_name` / `previous_channel_name`; a move between channels fires
+    without the name of the one left (what kind of call that was is not on the frame). A server
+    channel keeps its name, and so does the channel a plain leave names. Ids, `call_kind` and the
+    guild stay, so "joined a call" still triggers. Returns the frame itself when nothing changes.
+    """
+    private = frame.get("call_kind") in _PRIVATE_CALL_KINDS
+    moved = frame.get("channel_id") is not None and frame.get("previous_channel_id") is not None
+    redacted = dict(frame)
+    if private and redacted.get("channel_name") is not None:
+        redacted["channel_name"] = None
+    if (private or moved) and redacted.get("previous_channel_name") is not None:
+        redacted["previous_channel_name"] = None
+    return frame if redacted == frame else redacted
 
 
 def _obs_from_snapshot(o: dict[str, Any]) -> dict[str, Any]:
@@ -1023,8 +1048,25 @@ class SwitchboardCoordinator(DataUpdateCoordinator[SwitchboardData]):
         a chat command with `login`/`name`/`args` null; moderation with the viewer fields null)
         so they can be counted and reacted to; the `mirror_chat_text` and
         `mirror_moderation_targets` options opt back in.
+
+        Two more follow the app's own log file (SB-00497): a frame the app marks
+        `"sensitive": true` (docs/HA.md — its text was rendered from a viewer's name or words)
+        fires with that rendered text null unless `mirror_chat_text` is on, and a Discord DM or
+        group call fires without the name of who is in it.
         """
         etype = frame.get("type")
+        if frame.get("sensitive") is True:
+            # The app sets the key on the rendered-text events only (`rule_fired`,
+            # `overlay_alert`, `variable_changed`, `external_command`, `external_command_failed`,
+            # `rule_action_queued`, `rule_action_failed`, `overlay_countdown`), and each carries
+            # its text in ONE of these fields. Keyed on the flag, not the type, so an event the
+            # app flags later is covered without a release. The flag itself stays on the frame:
+            # an automation can tell "redacted" from "empty".
+            if self.entry.options.get(CONF_MIRROR_CHAT_TEXT, False):
+                return frame
+            return {**frame, **{k: None for k in _RENDERED_TEXT_FIELDS if k in frame}}
+        if etype == "discord_voice_channel_changed":
+            return _without_call_partner(frame)
         if etype == "twitch_chat_message":
             if self.entry.options.get(CONF_MIRROR_CHAT_TEXT, False):
                 return frame

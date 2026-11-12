@@ -195,8 +195,9 @@ async def test_chat_command_redaction_leaves_the_coordinator_frame_alone(
 
 
 async def test_redaction_does_not_touch_other_events(hass: HomeAssistant) -> None:
-    """Only chat lines, chat commands and moderation are redacted here; the rest stay verbatim
-    (they are scope-gated by the app, and they are what the README documents as recorded)."""
+    """Only chat lines, chat commands, moderation, flagged rendered text and private calls are
+    redacted here; the rest stay verbatim (they are scope-gated by the app, and they are what the
+    README documents as recorded)."""
     coord = make_coordinator(hass)
     seen: list[dict[str, Any]] = []
     hass.bus.async_listen(EVENT_SWITCHBOARD, lambda e: seen.append(dict(e.data)))
@@ -204,6 +205,205 @@ async def test_redaction_does_not_touch_other_events(hass: HomeAssistant) -> Non
     coord._handle_frame(dict(event))
     await hass.async_block_till_done()
     assert seen == [event]
+
+
+async def _fired(
+    hass: HomeAssistant, coord: SwitchboardCoordinator, frame: dict[str, Any]
+) -> dict[str, Any]:
+    """The one bus event `frame` produces."""
+    seen: list[dict[str, Any]] = []
+    unsub = hass.bus.async_listen(EVENT_SWITCHBOARD, lambda e: seen.append(dict(e.data)))
+    coord._handle_frame(dict(frame))
+    await hass.async_block_till_done()
+    unsub()
+    assert len(seen) == 1
+    return seen[0]
+
+
+VIEWER = "MothLamp_99"
+
+# docs/HA.md "Two read scopes": the eight events whose text an automation renders, each with the
+# ONE field that carries it — as a `read_events_sensitive` holder receives them when that text
+# came from a sensitive trigger (`"sensitive": true`).
+FLAGGED_FRAMES: dict[str, tuple[dict[str, Any], str]] = {
+    "rule_fired": (
+        {
+            "type": "rule_fired",
+            "rule_id": "r1",
+            "name": "Cheer shoutout",
+            "action_type": "discord_webhook_send",
+            "target": "Alerts webhook",
+            "value": VIEWER,
+            "actions": 1,
+            "ok": True,
+            "log_ui": True,
+        },
+        "value",
+    ),
+    "overlay_alert": ({"type": "overlay_alert", "text": VIEWER}, "text"),
+    "variable_changed": (
+        {"type": "variable_changed", "name": "last_follower", "value": VIEWER, "deleted": False},
+        "value",
+    ),
+    "external_command": (
+        {
+            "type": "external_command",
+            "source": "Peer Studio",
+            "action_type": "overlay_alert_show",
+            "target": "",
+            "value": VIEWER,
+        },
+        "value",
+    ),
+    "external_command_failed": (
+        {
+            "type": "external_command_failed",
+            "source": "Peer Studio",
+            "action_type": "var_add",
+            "target": "",
+            "error": VIEWER,
+        },
+        "error",
+    ),
+    "rule_action_queued": (
+        {
+            "type": "rule_action_queued",
+            "rule_id": "r1",
+            "rule_name": "Thanks",
+            "action_type": "var_add",
+            "peer_id": CID,
+            "peer_name": "Studio",
+            "error": VIEWER,
+        },
+        "error",
+    ),
+    "rule_action_failed": (
+        {
+            "type": "rule_action_failed",
+            "rule_id": "r1",
+            "rule_name": "Thanks",
+            "action_type": "var_add",
+            "peer_id": CID,
+            "peer_name": "Studio",
+            "reason": VIEWER,
+        },
+        "reason",
+    ),
+    "overlay_countdown": (
+        {"type": "overlay_countdown", "ends_at_ms": 1700000000000, "label": VIEWER},
+        "label",
+    ),
+}
+
+
+@pytest.mark.parametrize("etype", sorted(FLAGGED_FRAMES))
+async def test_flagged_rendered_text_is_stripped_from_the_bus_by_default(
+    hass: HomeAssistant, etype: str
+) -> None:
+    """SB-00497: a frame the app marks `"sensitive": true` carries text rendered from a viewer's
+    name or words. The recorder would keep it, so it fires with that one field null; the rest of
+    the frame — and the flag, so an automation can tell redacted from empty — stays."""
+    event, field = FLAGGED_FRAMES[etype]
+    frame = {**event, "sensitive": True}
+    fired = await _fired(hass, make_coordinator(hass), frame)
+    assert fired == {**frame, field: None}
+    assert VIEWER not in str(fired)
+
+
+@pytest.mark.parametrize("etype", sorted(FLAGGED_FRAMES))
+async def test_flagged_rendered_text_reaches_the_bus_with_the_option_on(
+    hass: HomeAssistant, etype: str
+) -> None:
+    frame = {**FLAGGED_FRAMES[etype][0], "sensitive": True}
+    coord = make_coordinator(hass, {CONF_MIRROR_CHAT_TEXT: True})
+    assert await _fired(hass, coord, frame) == frame
+
+
+@pytest.mark.parametrize("etype", sorted(FLAGGED_FRAMES))
+async def test_unflagged_rendered_text_reaches_the_bus(hass: HomeAssistant, etype: str) -> None:
+    """The key is only ever `true` on the wire: without it — the text came from a plain trigger,
+    or the app predates the key — and with anything that is not `true`, the frame fires whole."""
+    event = FLAGGED_FRAMES[etype][0]
+    coord = make_coordinator(hass)
+    assert await _fired(hass, coord, event) == event
+    not_flagged = {**event, "sensitive": False}
+    assert await _fired(hass, coord, not_flagged) == not_flagged
+
+
+async def test_flagged_redaction_leaves_the_coordinator_frame_alone(hass: HomeAssistant) -> None:
+    """The entities take the frame as the app sent it: a flagged `variable_changed` is redacted
+    on the bus copy only."""
+    frame = {"type": "variable_changed", "name": "x", "value": VIEWER, "sensitive": True}
+    sent = dict(frame)
+    coord = make_coordinator(hass)
+    coord._handle_frame(sent)
+    await hass.async_block_till_done()
+    assert sent == frame
+
+
+VOICE_FRAME: dict[str, Any] = {
+    "type": "discord_voice_channel_changed",
+    "channel_id": "100",
+    "channel_name": "Stream lounge",
+    "guild_id": "200",
+    "guild_name": "Kirbo's server",
+    "call_kind": "server",
+    "previous_channel_id": None,
+    "previous_channel_name": None,
+}
+
+
+@pytest.mark.parametrize("call_kind", ["dm", "group_dm"])
+@pytest.mark.parametrize("mirror", [False, True])
+async def test_a_private_call_fires_without_the_partner_name(
+    hass: HomeAssistant, call_kind: str, mirror: bool
+) -> None:
+    """SB-00497: the "channel name" of a DM or group call is the people in it — the app files it
+    without that name, and so does the bus, whatever the options say. Ids and the kind stay."""
+    frame = {
+        **VOICE_FRAME,
+        "channel_name": VIEWER,
+        "guild_id": None,
+        "guild_name": None,
+        "call_kind": call_kind,
+        "previous_channel_id": "300",
+        "previous_channel_name": "Other friend",
+    }
+    fired = await _fired(hass, make_coordinator(hass, {CONF_MIRROR_CHAT_TEXT: mirror}), frame)
+    assert fired == {**frame, "channel_name": None, "previous_channel_name": None}
+
+
+async def test_a_server_channel_keeps_its_name_on_the_bus(hass: HomeAssistant) -> None:
+    """Joining a server channel fires whole; so does leaving one (no channel now, the one left
+    named)."""
+    coord = make_coordinator(hass)
+    assert await _fired(hass, coord, VOICE_FRAME) == VOICE_FRAME
+    left = {
+        **VOICE_FRAME,
+        "channel_id": None,
+        "channel_name": None,
+        "guild_id": None,
+        "guild_name": None,
+        "call_kind": None,
+        "previous_channel_id": "100",
+        "previous_channel_name": "Stream lounge",
+    }
+    assert await _fired(hass, coord, left) == left
+
+
+async def test_a_move_fires_without_the_name_of_the_channel_left(hass: HomeAssistant) -> None:
+    """A move does not say what kind of call was left, so its name goes; the channel joined (a
+    server channel) keeps its own."""
+    moved = {**VOICE_FRAME, "previous_channel_id": "300", "previous_channel_name": VIEWER}
+    fired = await _fired(hass, make_coordinator(hass), moved)
+    assert fired == {**moved, "previous_channel_name": None}
+
+
+async def test_a_voice_frame_without_names_is_fired_as_it_came(hass: HomeAssistant) -> None:
+    """A token without the sensitive scope already gets the names as null: nothing to redact, and
+    a frame from an app that omits the optional keys gains none."""
+    bare = {"type": "discord_voice_channel_changed", "channel_id": "100", "call_kind": "dm"}
+    assert await _fired(hass, make_coordinator(hass), bare) == bare
 
 
 MODERATION_FRAME: dict[str, Any] = {
