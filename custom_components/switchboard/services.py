@@ -143,6 +143,8 @@ ATTR_COLOR_TEMP_KELVIN = "color_temp_kelvin"
 ATTR_ON_MS = "on_ms"
 ATTR_OFF_MS = "off_ms"
 ATTR_TRANSITION_MS = "transition_ms"
+ATTR_STEPS = "steps"
+ATTR_BETWEEN = "between"
 ATTR_SECONDS = "seconds"
 ATTR_VISIBLE = "visible"
 ATTR_DISCORD_ROUTE = "discord_route"
@@ -240,6 +242,14 @@ ADD_TO_VARIABLE_SCHEMA = vol.Schema(
     }
 )
 
+# One step of a flash's colour sequence: a colour and (optionally) its own hold.
+_FLASH_STEP_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_COLOR): cv.string,
+        vol.Optional(ATTR_ON_MS): vol.All(vol.Coerce(int), vol.Range(min=100, max=5000)),
+    }
+)
+
 # `ha_light_flash` — everything rides in action_params.ha_flash; only `entity_id` is required.
 # Ranges mirror the clamps the app applies at perform time (docs/HA.md Commands).
 LIGHT_FLASH_SCHEMA = vol.Schema(
@@ -255,6 +265,12 @@ LIGHT_FLASH_SCHEMA = vol.Schema(
         vol.Optional(ATTR_ON_MS): vol.All(vol.Coerce(int), vol.Range(min=100, max=5000)),
         vol.Optional(ATTR_OFF_MS): vol.All(vol.Coerce(int), vol.Range(min=100, max=5000)),
         vol.Optional(ATTR_TRANSITION_MS): vol.All(vol.Coerce(int), vol.Range(min=0, max=5000)),
+        # The colours of one loop, in order (up to 8); absent = the single `color`.
+        vol.Optional(ATTR_STEPS): vol.All(
+            cv.ensure_list, [_FLASH_STEP_SCHEMA], vol.Length(min=1, max=8)
+        ),
+        # What the light does between two loops.
+        vol.Optional(ATTR_BETWEEN): vol.In(("off", "previous", "none")),
         **_ENTRY_FIELD,
     }
 )
@@ -420,6 +436,8 @@ _FLASH_KEYS = (
     ATTR_ON_MS,
     ATTR_OFF_MS,
     ATTR_TRANSITION_MS,
+    ATTR_STEPS,
+    ATTR_BETWEEN,
 )
 
 

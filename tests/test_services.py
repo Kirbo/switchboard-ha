@@ -313,6 +313,54 @@ async def test_light_flash_omits_unset_params_so_the_app_defaults_apply(
     }
 
 
+async def test_light_flash_forwards_a_colour_sequence(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    await _call(
+        hass,
+        "light_flash",
+        {
+            "entity_id": "light.a",
+            "flashes": 2,
+            "between": "none",
+            "steps": [
+                {"color": "#a855f7", "on_ms": 250},
+                {"color": "#00ff00"},
+            ],
+        },
+    )
+    assert _client(hass, entry.entry_id).commands[-1]["action_params"] == {
+        "ha_flash": {
+            "entity_id": "light.a",
+            "flashes": 2,
+            "between": "none",
+            "steps": [
+                {"color": "#a855f7", "on_ms": 250},
+                {"color": "#00ff00"},
+            ],
+        }
+    }
+
+
+async def test_light_flash_rejects_a_bad_sequence(hass: HomeAssistant) -> None:
+    await _setup(hass)
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "light_flash", {"entity_id": "light.a", "between": "sometimes"})
+    with pytest.raises(vol.Invalid):
+        await _call(hass, "light_flash", {"entity_id": "light.a", "steps": [{"on_ms": 250}]})
+    with pytest.raises(vol.Invalid):
+        await _call(
+            hass,
+            "light_flash",
+            {"entity_id": "light.a", "steps": [{"color": "#a855f7", "on_ms": 9}]},
+        )
+    with pytest.raises(vol.Invalid):
+        await _call(
+            hass,
+            "light_flash",
+            {"entity_id": "light.a", "steps": [{"color": "#a855f7"}] * 9},
+        )
+
+
 async def test_light_flash_rejects_out_of_range_values(hass: HomeAssistant) -> None:
     await _setup(hass)
     with pytest.raises(vol.Invalid):

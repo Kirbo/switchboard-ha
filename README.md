@@ -137,8 +137,11 @@ presets simply gets none.
   `deep_link`, `input_consent`; more may follow). Switchboard's own state, pushed by
   `decision_waiting_changed`: use it to notify your phone when the window is hidden. An older app
   has no such state and the sensor stays off.
-- `switchboard.light_flash` — blink a light or light group N times in a colour through
-  *Switchboard's own* downstream Home Assistant connection, then restore its previous state.
+- `switchboard.light_flash` — run a colour sequence on a light or light group N times through
+  *Switchboard's own* downstream Home Assistant connection, then restore its previous state:
+  one colour, or `steps` (several colours in a row, each with its own hold); `between` says what
+  the light does between loops (`off`, `previous` = back to how it was, `none`). `steps` and
+  `between` need a Switchboard build from 2026-11-23 or later; an older one ignores them.
   Like every `ha_*` action this needs the **global** External API token, not a paired-plugin one.
 - `switchboard.discord_voice` — the Discord desktop app on the Switchboard machine, as its own
   buttons: `action` is `mute` / `unmute` / `toggle_mute` (microphone), `deafen` / `undeafen` /

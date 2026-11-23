@@ -240,7 +240,7 @@
     },
     "light_flash": {
       "name": "Flash a light",
-      "description": "Blink a light or light group N times in a colour through Switchboard's downstream Home Assistant connection, then restore its previous state. Requires the global External API token.",
+      "description": "Run a colour sequence on a light or light group N times through Switchboard's downstream Home Assistant connection, then restore its previous state. Requires the global External API token.",
       "fields": {
         "entity_id": {
           "name": "Light entity",
@@ -251,8 +251,8 @@
           "description": "Switchboard's Home Assistant connection label or id. Leave blank to use its default connection."
         },
         "flashes": {
-          "name": "Flashes",
-          "description": "Number of on/off cycles (1-20). Default 3."
+          "name": "Loops",
+          "description": "How many times the sequence runs (1-20). Default 3."
         },
         "color": {
           "name": "Colour",
@@ -267,16 +267,24 @@
           "description": "Flash in a white colour temperature (2000-6500 K) instead of the colour."
         },
         "on_ms": {
-          "name": "On time",
-          "description": "How long the light holds the flash colour per cycle, in milliseconds (100-5000). Default 500."
+          "name": "Hold time",
+          "description": "How long the light holds the colour per loop, in milliseconds (100-5000). Default 500. A step has its own."
         },
         "off_ms": {
-          "name": "Off time",
-          "description": "Gap between cycles with the light off, in milliseconds (100-5000). Default 500."
+          "name": "Pause between loops",
+          "description": "How long the light stays off, or in its previous state, before the next loop, in milliseconds (100-5000). Default 500."
         },
         "transition_ms": {
           "name": "Transition",
           "description": "Transition passed to Home Assistant on every step, in milliseconds (0-5000). Default 150."
+        },
+        "steps": {
+          "name": "Colour steps",
+          "description": "The colours of one loop, in order, each with its own hold: a list of {color, on_ms} (up to 8). Leave empty to flash the single colour."
+        },
+        "between": {
+          "name": "Between loops",
+          "description": "What the light does after the last colour of a loop: turn off (default), go back to its previous state, or nothing."
         },
         "entry_id": {
           "name": "Switchboard instance",
@@ -480,6 +488,15 @@
           "name": "Switchboard instance",
           "description": "Which Switchboard config entry to send this to. Leave blank when only one is set up."
         }
+      }
+    }
+  },
+  "selector": {
+    "flash_between": {
+      "options": {
+        "off": "Turn off",
+        "previous": "Back to the previous state",
+        "none": "Nothing"
       }
     }
   }
