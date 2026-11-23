@@ -280,7 +280,7 @@
         },
         "steps": {
           "name": "Colour steps",
-          "description": "The colours of one loop, in order, each with its own hold: a list of {color, on_ms} (up to 8). Leave empty to flash the single colour."
+          "description": "The colours of one loop, in order, each with its own hold: a list of items with color and on_ms (up to 8). Leave empty to flash the single colour."
         },
         "between": {
           "name": "Between loops",
